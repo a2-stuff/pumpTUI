@@ -49,7 +49,7 @@ pumpTUI is a Terminal User Interface (TUI) application for viewing and tracking 
 Environment variables are handled via a `.env` file or system environment variables.
 
 1.  Create a `.env` file in the root directory (if not already present).
-2.  Add your API Key if you have a custom one (optional, a default key is included):
+2.  Add your API Key if you have a custom one (optional, a default key is included). You can generate a new API key at [pumpportal.fun/trading-api/setup](https://pumpportal.fun/trading-api/setup):
     ```env
     API_KEY=your_api_key_here
     ```
