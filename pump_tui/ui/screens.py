@@ -1,5 +1,6 @@
 from textual.widgets import Label, Input, Button, Markdown, Static
-from textual.containers import Vertical, Container, Horizontal
+from textual.containers import Vertical, Container, Horizontal, Grid
+from textual.screen import ModalScreen, Screen
 from textual.app import ComposeResult
 
 from ..config import config
@@ -100,3 +101,117 @@ class WalletTrackerView(Container):
         yield Static("Enter a wallet address to track its activity (coming soon).", classes="info-text")
         yield Input(placeholder="Enter Solana Wallet Address...", id="tracker_address")
         yield Button("Track Wallet", variant="primary", id="btn_track")
+
+class QuitScreen(ModalScreen):
+    """Screen for confirming quit."""
+    
+    DEFAULT_CSS = """
+    QuitScreen {
+        align: center middle;
+        background: $primary 10%;
+    }
+    #quit-dialog {
+        padding: 1 2;
+        width: 40;
+        height: auto;
+        border: solid $accent;
+        background: $surface;
+    }
+    #quit-title {
+        text-style: bold;
+        content-align: center middle;
+        padding-bottom: 1;
+    }
+    #quit-buttons {
+        align: center middle;
+        width: 100%;
+        height: auto;
+        padding-top: 1;
+    }
+    Button {
+        margin: 0 2;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="quit-dialog"):
+            yield Label("Are you sure you want to quit?", id="quit-title")
+            with Horizontal(id="quit-buttons"):
+                yield Button("Yes", variant="error", id="quit-yes")
+                yield Button("No", variant="primary", id="quit-no")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "quit-yes":
+            self.dismiss(True)
+        else:
+            self.dismiss(False)
+
+class ShutdownScreen(Screen):
+    """Screen shown during shutdown."""
+    DEFAULT_CSS = """
+    ShutdownScreen {
+        align: center middle;
+        background: #1e1e2e;
+    }
+    Label {
+        color: #f38ba8;
+        text-style: bold;
+    }
+    """
+    def compose(self) -> ComposeResult:
+         yield Label("Closing connections... cleaning up...", id="shutdown-msg")
+
+class StartupScreen(Screen):
+    """Screen shown on startup with animation."""
+    
+    DEFAULT_CSS = """
+    StartupScreen {
+        align: center middle;
+        background: #1e1e2e;
+    }
+    .logo {
+        color: #89b4fa;
+        text-style: bold;
+        padding-bottom: 2;
+        content-align: center middle;
+    }
+    #status {
+        color: #a6adc8;
+    }
+    """
+    
+    from textual.reactive import reactive
+    loading_text = reactive("Initializing...")
+
+    def compose(self) -> ComposeResult:
+        yield Label(
+            "   ___                      _____ _   _ _____\n"
+            "  / _ \ _   _ _ __ ___  _ _|_   _| | | |_   _|\n"
+            " / /_)/| | | | '_ ` _ \| '_ \| | | | | | | |\n"
+            "/ ___/ | |_| | | | | | | |_) | | | |_| |_| |_\n"
+            "\/      \__,_|_| |_| |_| .__/|_|  \___/_____/\n"
+            "                       |_|                    ",
+            classes="logo"
+        )
+        yield Label(self.loading_text, id="status")
+
+    def watch_loading_text(self, text: str) -> None:
+        try:
+            self.query_one("#status", Label).update(text)
+        except Exception:
+            pass
+
+    async def start_loading(self):
+        """Cycle through loading steps."""
+        steps = [
+            "Loading UI Components...",
+            "Connecting to APIs...",
+            "Loading Wallet Tracker...",
+            "Preparing Token Stream...",
+            "Ready!"
+        ]
+        import asyncio
+        for step in steps:
+            self.loading_text = step
+            await asyncio.sleep(0.5)
+

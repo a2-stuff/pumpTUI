@@ -15,10 +15,13 @@ async def fetch_token_metadata(uri: str) -> Optional[Dict[str, Any]]:
 
     if cid:
         # Multiple gateways to try if Pinata is ratelimited (429)
+        # Multiple gateways to utilize public infrastructure
+        # Pinata often rate limits free tiers, so we prioritize others
         gateways = [
-            f"https://gateway.pinata.cloud/ipfs/{cid}",
             f"https://cf-ipfs.com/ipfs/{cid}",
+            f"https://dweb.link/ipfs/{cid}",
             f"https://ipfs.io/ipfs/{cid}",
+            f"https://gateway.pinata.cloud/ipfs/{cid}", 
             f"https://gateway.ipfs.io/ipfs/{cid}"
         ]
         
@@ -26,7 +29,7 @@ async def fetch_token_metadata(uri: str) -> Optional[Dict[str, Any]]:
         async with httpx.AsyncClient() as client:
             for gw_url in gateways:
                 try:
-                    response = await client.get(gw_url, timeout=7.0)
+                    response = await client.get(gw_url, timeout=7.0, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0"})
                     if response.status_code == 200:
                         return response.json()
                     elif response.status_code == 429:
@@ -42,7 +45,7 @@ async def fetch_token_metadata(uri: str) -> Optional[Dict[str, Any]]:
     # Regular URL fetch
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(uri, timeout=10.0)
+            response = await client.get(uri, timeout=10.0, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0"})
             response.raise_for_status()
             return response.json()
     except Exception as e:

@@ -1,24 +1,111 @@
 import asyncio
 import json
+import psutil
+import csv
+import os
+from datetime import datetime
 from textual.app import App, ComposeResult
-from textual.widgets import Header, Footer, TabbedContent, TabPane, Placeholder, DataTable
+from textual.widgets import Header, Footer, TabbedContent, TabPane, Placeholder, DataTable, Label
 from textual.containers import Container
 from textual.binding import Binding
+from textual.reactive import reactive
 from ..api import PumpPortalClient
 from ..helpers import get_env_var
 from .widgets import TokenTable, TokenDetail
-from .screens import SettingsView, InfoView, WalletTrackerView
+from .screens import SettingsView, InfoView, WalletTrackerView, QuitScreen, StartupScreen, ShutdownScreen
 from .wallet_screen import WalletView
+
+class SystemHeader(Container):
+    """Custom header with system stats."""
+    
+    DEFAULT_CSS = """
+    SystemHeader {
+        layout: horizontal;
+        height: 1;
+        dock: top;
+        background: #1e1e2e;
+        color: #89b4fa;
+        margin-bottom: 1;
+    }
+    .header-title {
+        content-align: center middle;
+        width: 1fr;
+        text-style: bold;
+    }
+    .header-stats {
+        content-align: right middle;
+        padding-right: 1;
+        width: auto;
+        color: #a6adc8;
+    }
+    """
+
+    def __init__(self, title: str = "PumpTUI"):
+        super().__init__()
+        self.app_title = title
+
+    def compose(self) -> ComposeResult:
+        yield Label(self.app_title, classes="header-title")
+        yield Label("", id="header_stats", classes="header-stats")
+
+    def on_mount(self) -> None:
+        self.set_interval(1.0, self.update_stats)
+        self.update_stats()
+
+    def update_stats(self) -> None:
+        cpu = psutil.cpu_percent()
+        mem = psutil.virtual_memory().percent
+        time_str = datetime.now().time().strftime("%X")
+        if self.is_mounted:
+            # Calculate Velocity (Tokens Per Minute)
+            velocity = 0
+            if hasattr(self.app, "token_timestamps"):
+                now = datetime.now().timestamp()
+                # Filter timestamps older than 60s
+                recent = [ts for ts in self.app.token_timestamps if now - ts <= 60]
+                velocity = len(recent)
+                # Clean up app's list occasionally (optional, but good practice to keep it clean)
+                if len(self.app.token_timestamps) > len(recent):
+                     self.app.token_timestamps = recent
+            
+            # Latency from WebSocket (Manual Ping)
+            latency_ms = 0
+            if hasattr(self.app, "api_client") and self.app.api_client.websocket and self.app.api_client.running:
+                 try:
+                     import time
+                     start = time.perf_counter()
+                     # sending a ping and waiting for pong (if supported by lib version, otherwise might need await)
+                     # Since this is sync, we can't await. We can check if the library has updated latency from background pings
+                     # or we just rely on the property if it eventually updates.
+                     # If the property is 0, let's try to assume it's just very fast or not updated yet.
+                     
+                     # Check if we can get it from the protocol state
+                     ws = self.app.api_client.websocket
+                     if hasattr(ws, "latency"):
+                         latency_ms = int(ws.latency * 1000)
+                     
+                 except Exception:
+                     latency_ms = 0
+
+                     latency_ms = 0
+
+            self.query_one("#header_stats", Label).update(f"Velocity: {velocity} tpm  Latency: {latency_ms}ms  CPU: {cpu:.0f}% Mem: {mem:.0f}%  {time_str}")
 
 class PumpApp(App):
     """A Textual app to view Pump.fun tokens."""
 
-    TITLE = "pumpTUI"
+    TITLE = "pumpTUI v1.0.1"
     CSS_PATH = "styles.tcss"
     BINDINGS = [
-        ("q", "quit", "Quit"),
-        ("r", "refresh", "Refresh Data"),
-        ("ctrl+p", "switch_to_settings", "Preferences"),
+        Binding("q", "quit", "Quit"),
+        Binding("n", "switch_to_new", "New Tokens"),
+        Binding("v", "switch_to_volume", "Volume"),
+        Binding("t", "switch_to_tracker", "Tracker"),
+        Binding("w", "switch_to_wallets", "Wallets"),
+        Binding("x", "switch_to_settings", "Settings"),
+        Binding("s", "focus_search", "Search"),
+        Binding("i", "switch_to_info", "Info"),
+        Binding("r", "refresh", "Refresh Data"),
     ]
 
     def __init__(self):
@@ -28,15 +115,104 @@ class PumpApp(App):
         if not self.api_key:
              self.api_key = "8hw2peb2a92q0ya475gkgnbdb4nmev9r9134gjkra9m4pc3m6ttqebup9dw6rwvh98tq8ub389jpcckg91pn2t3he8r34wb298r6yvb465vn4c9nat75euhgf1n62nbd84rn0mu7a4ykuathppthqa8rpcnbt6d87jbuh7471672yj65d2p4h3natpqjpb3ax2mwrba8hkkuf8"
         self.api_client = PumpPortalClient(api_key=self.api_key)
+        self.token_timestamps = [] # Track timestamps of new tokens
 
     async def on_mount(self) -> None:
         """Called when app is mounted."""
+        # Show startup screen
+        startup = StartupScreen()
+        self.push_screen(startup)
+        
         # Start the WebSocket stream background task
         asyncio.create_task(self.stream_tokens())
+
+        # Run loading animation
+        asyncio.create_task(self.run_startup_animation(startup))
+
+    async def run_startup_animation(self, startup_screen: StartupScreen):
+        await startup_screen.start_loading()
+        self.pop_screen()
+
+    async def action_quit(self) -> None:
+        """Show quit confirmation."""
+        def check_quit(should_quit: bool) -> None:
+             if should_quit:
+                 self.push_screen(ShutdownScreen())
+                 asyncio.create_task(self.cleanup_and_exit())
+        
+        self.push_screen(QuitScreen(), check_quit)
+
+    async def cleanup_and_exit(self) -> None:
+        """Clean up resources and exit."""
+        # Give time for shutdown screen to render
+        await asyncio.sleep(1.0)
+        
+        if self.api_client:
+             if self.api_client.websocket:
+                 await self.api_client.close()
+        self.exit()
+
+    def save_token_to_csv(self, token_data: dict) -> None:
+        """Save token to daily CSV file."""
+        try:
+            date_str = datetime.now().strftime("%Y-%m-%d")
+            filename = f"tokensdb/tokens_{date_str}.csv"
+            file_exists = os.path.isfile(filename)
+            
+            # Ensure directory exists
+            os.makedirs("tokensdb", exist_ok=True)
+            
+            with open(filename, "a", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                # Write header if new file
+                if not file_exists:
+                    writer.writerow(["timestamp", "mint", "name", "symbol", "dev_address", "bonding_curve"])
+                
+                # Extract fields safely
+                timestamp = datetime.now().isoformat()
+                mint = token_data.get("mint", "")
+                name = token_data.get("name", "")
+                symbol = token_data.get("symbol", "")
+                dev = token_data.get("traderPublicKey", "")
+                curve = token_data.get("bondingCurveKey", "")
+                
+                writer.writerow([timestamp, mint, name, symbol, dev, curve])
+        except Exception as e:
+            # Log error but don't crash app
+            with open("error.log", "a") as f:
+                f.write(f"CSV Error: {e}\n")
 
     async def action_switch_to_settings(self) -> None:
         """Switch to settings tab."""
         self.query_one(TabbedContent).active = "settings"
+
+    async def action_switch_to_new(self) -> None:
+        """Switch to New Tokens tab."""
+        self.query_one(TabbedContent).active = "new"
+
+    async def action_switch_to_tracker(self) -> None:
+        """Switch to Tracker tab."""
+        self.query_one(TabbedContent).active = "tracker"
+
+    async def action_switch_to_wallets(self) -> None:
+        """Switch to Wallets tab."""
+        self.query_one(TabbedContent).active = "wallet"
+
+    async def action_switch_to_info(self) -> None:
+        """Switch to Info tab."""
+        self.query_one(TabbedContent).active = "info"
+
+    async def action_switch_to_volume(self) -> None:
+        """Switch to Volume/Trending tab."""
+        self.query_one(TabbedContent).active = "trending"
+
+    async def action_focus_search(self) -> None:
+        """Switch to New Tokens tab and focus search."""
+        self.query_one(TabbedContent).active = "new"
+        try:
+            self.query_one("#search_input").focus()
+        except Exception:
+            self.notify("Search input not found.", severity="error")
 
     async def stream_tokens(self) -> None:
         """Listen to WS and update table."""
@@ -77,6 +253,12 @@ class PumpApp(App):
          
          # 2. Subscribe if New Token
          if "mint" in event and event.get("txType") in [None, "create"]:
+             # Track for Velocity
+             self.token_timestamps.append(datetime.now().timestamp())
+             
+             # Save to CSV
+             self.save_token_to_csv(event)
+             
              mint = event.get("mint")
              if mint:
                  asyncio.create_task(self.api_client.subscribe_token_trade([mint]))
@@ -100,20 +282,20 @@ class PumpApp(App):
         await self.api_client.close()
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        yield SystemHeader(title=self.TITLE)
         with TabbedContent(initial="new"):
             with TabPane("New Tokens", id="new"):
                 # Split Container
                 with Container(classes="split-container"):
                     yield TokenTable(title="New Tokens", id="table_new")
                     yield TokenDetail(id="detail_view")
-            
-            # Other tabs (placeholders or settings)
-            with TabPane("Wallet Tracker", id="tracker"):
+             
+             # Other tabs (placeholders or settings)
+            with TabPane("Tracker", id="tracker"):
                 yield WalletTrackerView()
-            with TabPane("Wallet Manager", id="wallet"):
+            with TabPane("Wallets", id="wallet"):
                 yield WalletView(id="wallet_view")
-            with TabPane("Trending", id="trending"):
+            with TabPane("Volume", id="trending"):
                 yield Placeholder("Trending view unavailable in this mode")
             with TabPane("Settings", id="settings"):
                 yield SettingsView()

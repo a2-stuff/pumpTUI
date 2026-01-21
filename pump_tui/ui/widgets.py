@@ -6,6 +6,8 @@ from rich.text import Text
 from rich.markup import escape
 from typing import Callable, Awaitable, List, Dict, Any, Optional
 import asyncio
+import time
+from datetime import datetime
 from ..config import config
 
 class TokenTable(Widget):
@@ -37,7 +39,7 @@ class TokenTable(Widget):
 
     def on_mount(self) -> None:
         self.table.cursor_type = "row"
-        cols = self.table.add_columns("Token CA", "Name", "Ticker", "MC (SOL)", "Tx", "Holders", "Created")
+        cols = self.table.add_columns("Token CA", "Name", "Ticker", "MC (SOL)", "Tx", "Holders", "Age", "Dev")
         # Store MC column key specifically
         if len(cols) >= 4:
             self.column_keys["MC (SOL)"] = cols[3]
@@ -45,6 +47,13 @@ class TokenTable(Widget):
             self.column_keys["Tx"] = cols[4]
         if len(cols) >= 6:
             self.column_keys["Holders"] = cols[5]
+        if len(cols) >= 7:
+            self.column_keys["Age"] = cols[6]
+        if len(cols) >= 8:
+            self.column_keys["Dev"] = cols[7]
+        
+        # Start Age Timer
+        self.set_interval(1.0, self._update_ages)
         
         if self.fetch_method:
             self.load_data()
@@ -92,6 +101,45 @@ class TokenTable(Widget):
             # OR if txType == "create"
             if "mint" in event:
                 self.add_new_token(event)
+
+    def _update_ages(self) -> None:
+        """Update the Age column for visible rows."""
+        if not self.table.is_mounted:
+            return
+            
+        source_list = self.filtered_history
+        start_idx = (self.current_page - 1) * self.page_size
+        end_idx = start_idx + self.page_size
+        page_items = source_list[start_idx:end_idx]
+        
+        age_col = self.column_keys.get("Age")
+        if not age_col:
+            return
+
+        now_ts = time.time()
+        
+        for item in page_items:
+            mint = item.get("mint")
+            created_ts = item.get("timestamp")
+            
+            age_str = "0s"
+            if created_ts and isinstance(created_ts, (int, float)):
+                diff = int(now_ts - created_ts)
+                if diff < 60:
+                    age_str = f"{diff}s"
+                elif diff < 3600:
+                    m = diff // 60
+                    s = diff % 60
+                    age_str = f"{m}m {s}s"
+                else:
+                    h = diff // 3600
+                    m = (diff % 3600) // 60
+                    age_str = f"{h}h {m}m"
+            
+            try:
+                self.table.update_cell(mint, age_col, age_str)
+            except Exception:
+                pass
 
     def update_token_trade(self, trade: Dict[str, Any]) -> None:
         """Update existing token data from a trade event."""
@@ -173,6 +221,14 @@ class TokenTable(Widget):
         
         if creator and trader and creator == trader and tx_type == "sell":
             stored_item["dev_sold"] = True
+            
+            # Update Table Cell for Dev Sold
+            dev_col = self.column_keys.get("Dev")
+            if dev_col:
+                try:
+                    self.table.update_cell(mint, dev_col, Text.from_markup("[green]SOLD[/]"))
+                except:
+                    pass
         # -------------------------
 
     def add_token(self, item: Dict[str, Any]) -> None:
@@ -189,7 +245,10 @@ class TokenTable(Widget):
 
         # Store data
         # Initialize Aggregated Metrics
-        item["tx_count"] = 1
+        if "timestamp" not in item:
+             item["timestamp"] = time.time()
+        
+        item["tx_count"] = 0
         item["volume_sol"] = 0.0
         item["dev_sold"] = False
         item["creator"] = item.get("traderPublicKey", None)
@@ -219,8 +278,29 @@ class TokenTable(Widget):
             self.filtered_history.insert(0, item)
             # If filtered list gets too big? It's just a view.
             
-            # Update view if we are on the first page
+            # Update view ONLY if we are on the first page AND the widget is effectively visible
+            # Accessing the parent TabPane to see if it's active is a robust way, 
+            # or checking if we are in the active DOM branch.
+            # Textual doesn't have a simple "is_effectively_visible" for tabs yet without checking parents.
+            # But checking if we are visible is a good proxy if standard visibility is used.
+            # However, TabbedContent hides content by `display: position/none`.
+            
+            
+            # Default to False to prevent background updates from stealing focus/tab
+            should_render = False
+            
             if self.current_page == 1:
+                try:
+                    # Check if our parent tab is the active one
+                    # We query by type name "TabbedContent"
+                    tab_content = self.app.query_one("TabbedContent")
+                    if tab_content.active == "new":
+                        should_render = True
+                except Exception:
+                    # If we can't find the tab content or app, assume we are hidden
+                    should_render = False
+
+            if should_render:
                 # Store cursor and scroll position
                 coord = self.table.cursor_coordinate
                 scroll_x, scroll_y = self.table.scroll_offset
@@ -259,6 +339,10 @@ class TokenTable(Widget):
         for item in page_items:
             mint = item.get("mint", "N/A")
             name = item.get("name", "N/A")
+            # Truncate Name
+            if len(name) > 22:
+                name = rf"{name[:5]}...{name[-5:]}"
+            
             raw_symbol = item.get("symbol", "N/A")
             symbol = f"${raw_symbol}" if raw_symbol != "N/A" else "N/A"
             market_cap = f"{item.get('market_cap', 0):.2f}"
@@ -272,21 +356,23 @@ class TokenTable(Widget):
                 mc_style = "red"
             market_cap = f"[{mc_style}]{mc_val:.2f}[/]"
             
-            created = str(item.get("created_timestamp", "N/A"))
-            if "timestamp" in item:
-                 try:
-                     from datetime import datetime
-                     ts = item.get("timestamp")
-                     if isinstance(ts, (int, float)):
-                         created = datetime.fromtimestamp(ts).strftime("%H:%M:%S")
-                 except:
-                     pass
+            # Ensure we have a timestamp for age calc
+            ts = item.get("timestamp")
             
-            if created == "N/A":
-                 created = item.get("_received_at", "?") 
-                 if created == "?":
-                     from datetime import datetime
-                     created = datetime.now().strftime("%H:%M:%S")
+            # Removed 'created' string generation as per instruction
+            # if "timestamp" in item:
+            #      try:
+            #          ts = item.get("timestamp")
+            #          if isinstance(ts, (int, float)):
+            #              created = datetime.fromtimestamp(ts).strftime("%H:%M:%S")
+            #      except:
+            #          pass
+            
+            # if created == "N/A":
+            #      created = item.get("_received_at", "?") 
+            #      if created == "?":
+            #          from datetime import datetime
+            #          created = datetime.now().strftime("%H:%M:%S")
 
             display_mint = mint
             if len(mint) > 10:
@@ -312,7 +398,30 @@ class TokenTable(Widget):
                 h_style = "red"
             holders = f"[{h_style}]{h_val}[/]"
             
-            self.table.add_row(display_mint, name, symbol, Text.from_markup(market_cap), Text.from_markup(tx_count), Text.from_markup(holders), created, key=mint)
+            # Initial Age Calculation
+            age_str = "0s"
+            if ts and isinstance(ts, (int, float)):
+                now_ts = time.time()
+                diff = int(now_ts - ts)
+                if diff < 60:
+                     age_str = f"{diff}s"
+                elif diff < 3600:
+                     m = diff // 60
+                     s = diff % 60
+                     age_str = f"{m}m {s}s"
+                else:
+                     h = diff // 3600
+                     m = (diff % 3600) // 60
+                     age_str = f"{h}h {m}m"
+            
+            # Dev Sold
+            dev_sold = item.get("dev_sold", False)
+            if dev_sold:
+                dev_str = "[green]SOLD[/]"
+            else:
+                dev_str = "[red]HOLDING[/]"
+
+            self.table.add_row(display_mint, name, symbol, Text.from_markup(market_cap), Text.from_markup(tx_count), Text.from_markup(holders), age_str, Text.from_markup(dev_str), key=mint)
         
         # Update controls
         self.query_one("#page_label", Label).update(f"Page {self.current_page} (Total: {len(source_list)})")

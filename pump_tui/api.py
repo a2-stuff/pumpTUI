@@ -13,9 +13,12 @@ class PumpPortalClient:
 
     async def connect(self):
         """Establish the WebSocket connection."""
+        if self.websocket and self.websocket.open:
+            return  # Reuse existing connection
+
         try:
             print(f"Connecting to {self.URI}...")
-            self.websocket = await websockets.connect(self.URI, open_timeout=10, ping_interval=None)
+            self.websocket = await websockets.connect(self.URI, open_timeout=10, ping_interval=2, ping_timeout=5)
             self.running = True
             print("Connected to PumpPortal WebSocket.")
         except Exception as e:

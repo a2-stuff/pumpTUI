@@ -21,9 +21,10 @@ async def render_image_to_ansi(url: str, width: int = 30) -> str:
 
     if cid:
         gateways = [
-            f"https://gateway.pinata.cloud/ipfs/{cid}",
             f"https://cf-ipfs.com/ipfs/{cid}",
-            f"https://ipfs.io/ipfs/{cid}"
+            f"https://dweb.link/ipfs/{cid}", 
+            f"https://ipfs.io/ipfs/{cid}",
+            f"https://gateway.pinata.cloud/ipfs/{cid}"
         ]
     else:
         gateways = [url]
@@ -32,7 +33,7 @@ async def render_image_to_ansi(url: str, width: int = 30) -> str:
     async with httpx.AsyncClient() as client:
         for gw_url in gateways:
             try:
-                response = await client.get(gw_url, timeout=7.0)
+                response = await client.get(gw_url, timeout=5.0, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0"})
                 if response.status_code == 200:
                     img_data = response.read()
                     break

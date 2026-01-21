@@ -92,13 +92,13 @@ Tab.-active {
     width: 1fr;
     height: 1fr;
     overflow-y: scroll;
-    padding-right: 32;
+    padding-right: 24;
 }
 
 .image-container {
     width: 22;
     height: 11;
-    border: tall #89b4fa;
+    /* border: tall #89b4fa; Removed divider */
     background: #11111b;
     dock: right;
     margin: 0 4 1 1;
@@ -134,7 +134,9 @@ DataTable {
 }
 
 .pagination-controls Label {
-    margin: 1 2;
+    margin: 0 2;
+    height: 1;
+    content-align: center middle;
     text-style: bold;
     color: #f9e2af;
 }
@@ -193,12 +195,29 @@ Input:focus {
 Button {
     background: #89b4fa;
     color: #1e1e2e;
-    width: 100%;
-    margin-top: 1;
+    height: 1;
+    min-width: 10;
+    width: auto;
+    margin: 1 1;
+    border: none;
 }
 
 Button:hover {
     background: #a6e3a1;
+}
+
+.pagination-controls Button {
+    width: auto;
+    min-width: 8;
+    height: 1;
+    margin: 0 1;
+    background: #313244;
+    color: #cdd6f4;
+}
+
+.pagination-controls Button:hover {
+    background: #585b70; /* Brighter highlight */
+    color: #ffffff;
 }
 
 Markdown {
