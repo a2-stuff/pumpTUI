@@ -45,16 +45,24 @@ pumpTUI is a Terminal User Interface (TUI) application for viewing and tracking 
     ```
 
 ## Setup
+Environment variables are handled via a `.env` file in the root directory. To configure or update your settings:
 
-Environment variables are handled via a `.env` file or system environment variables.
-
-1.  Create a `.env` file in the root directory (if not already present).
-2.  Add your API Key if you have a custom one (optional, a default key is included). You can generate a new API key at [pumpportal.fun/trading-api/setup](https://pumpportal.fun/trading-api/setup):
+1.  **Create/Edit `.env`**: If not present, create a file named `.env` based on `.env.example`.
+2.  **Update API Key**: Add your PumpPortal API Key. You can generate one at [pumpportal.fun/trading-api/setup](https://pumpportal.fun/trading-api/setup).
     ```env
-    API_KEY=your_api_key_here
+    API_KEY=your_actual_api_key_here
+    ```
+3.  **Update RPC URL**: Use a premium RPC (Alchemy, QuickNode) for faster trade execution.
+    ```env
+    RPC_URL=https://solana-mainnet.g.alchemy.com/v2/your_key
+    ```
+4.  **Trading Defaults**: You can also set default slippage and priority fees:
+    ```env
+    DEFAULT_SLIPPAGE=10
+    DEFAULT_PRIORITY_FEE=0.005
     ```
 
-## Usage
+> **Note**: After updating the `.env` file, you must restart the application for changes to take effect.
 
 To start the application, use the provide management script:
 

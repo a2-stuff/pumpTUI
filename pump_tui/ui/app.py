@@ -148,6 +148,14 @@ class PumpApp(App):
     async def run_startup_animation(self, startup_screen: StartupScreen):
         await startup_screen.start_loading()
         self.pop_screen()
+        
+        # Check for missing configuration and notify
+        from ..helpers import get_env_var
+        if not get_env_var("API_KEY"):
+            self.notify("⚠️ No API_KEY found in .env. Trading features may be limited.", variant="warning", timeout=10)
+        if not get_env_var("RPC_URL"):
+            self.notify("⚠️ No RPC_URL found in .env. Using public Solana RPC (slower).", variant="warning", timeout=10)
+            
         # Start Price Ticker
         self.set_interval(10.0, self.update_market_prices)
         asyncio.create_task(self.update_market_prices())
