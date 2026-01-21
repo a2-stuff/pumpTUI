@@ -1,8 +1,11 @@
-from textual.widgets import DataTable, Button, Label, Input, Pretty
+from textual.widgets import DataTable, Button, Label, Input, Pretty, Static
 from textual.containers import Horizontal, Vertical
 from textual.app import ComposeResult
 from textual.widget import Widget
-from typing import Callable, Awaitable, List, Dict, Any
+from rich.text import Text
+from rich.markup import escape
+from typing import Callable, Awaitable, List, Dict, Any, Optional
+import asyncio
 
 class TokenTable(Widget):
     """A widget to display a list of tokens with search."""
@@ -11,7 +14,7 @@ class TokenTable(Widget):
         super().__init__(id=id)
         self.fetch_method = fetch_method
         self.table_title = title
-        self.table = DataTable()
+        self.table = DataTable(id="tokens_data_table")
         self.data_store: Dict[str, Dict[str, Any]] = {} # Store full token data
         self.column_keys = {} # Store ColumnKey objects
         
@@ -168,12 +171,32 @@ class TokenTable(Widget):
             
             # Update view if we are on the first page
             if self.current_page == 1:
-                # We can just prepend if it's the very first item
-                # But to maintain page size accurately with pre-pending logic is tricky.
-                # Easiest is to re-render page 1 if we are there.
+                # Store cursor and scroll position
+                coord = self.table.cursor_coordinate
+                scroll_x, scroll_y = self.table.scroll_offset
+                
                 self.render_page()
+                
+                # Restore cursor (shifted by 1 if we added a row above)
+                if coord.row >= 0:
+                    try:
+                        new_row = coord.row + 1
+                        # Wait a bit or use call_later to ensure table has processed rows
+                        self.table.call_later(self._restore_table_state, new_row, coord.column, scroll_x, scroll_y)
+                    except:
+                        pass
+
+    def _restore_table_state(self, row, col, scroll_x, scroll_y):
+        """Helper to restore table state after re-render."""
+        try:
+            if row < self.table.row_count:
+                self.table.cursor_coordinate = (row, col)
+            self.table.scroll_to(scroll_x, scroll_y, animate=False)
+        except:
+            pass
 
     def render_page(self):
+
         """Render the current page from filtered history."""
         self.table.clear()
         
@@ -243,13 +266,14 @@ class TokenTable(Widget):
         except Exception:
             pass
             
-    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        pass
+    # Selection is handled by the App to coordinate between table and detail view.
+
 
 from textual.widgets import Static
 
+
 from .image_utils import fetch_token_metadata
-import asyncio
+from .image_renderer import render_image_to_ansi
 
 class TokenDetail(Static):
     """Widget to display details of a selected token."""
@@ -259,83 +283,133 @@ class TokenDetail(Static):
         self.current_token = None
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="detail_container"):
-             yield Static("Select a token to view expanded details.", id="detail_content")
+        with Horizontal(id="detail_layout"):
+             yield Vertical(
+                 Static("Select a token to view expanded details.", id="detail_content"),
+                 id="detail_text_container"
+             )
+             yield Static("", id="detail_image", classes="image-container")
 
     def update_token(self, token_data: Dict[str, Any]) -> None:
         """Update the detail view with new token data."""
         self.current_token = token_data
         
-        # Build content
-        lines = [f"[b][u]Token Details[/u][/b]\n"]
+        # Use Text object for safe rendering (no markup issues)
+        content = Text()
+        content.append("Token Details\n", style="bold underline")
         
         priority_keys = ["name", "symbol", "mint", "marketCapSol", "created_timestamp", "uri"]
         
         for key in priority_keys:
             if key in token_data:
                 val = token_data[key]
-                lines.append(f"[b]{key}:[/b] {val}")
+                content.append(f"{key}: ", style="bold")
+                content.append(f"{val}\n")
+        
+        content.append("\n") # Spacer
         
         # Extended Metrics
-        lines.append("") # Spacer
-        
-        # Tx Count
         tx_count = token_data.get("tx_count", 1)
-        lines.append(f"[b]Tx Count:[/b] {tx_count}")
+        content.append("Tx Count: ", style="bold")
+        content.append(f"{tx_count}\n")
         
-        # Volume
         vol = token_data.get("volume_sol", 0.0)
-        lines.append(f"[b]Volume:[/b] {vol:.4f} SOL")
+        content.append("Volume: ", style="bold")
+        content.append(f"{vol:.4f} SOL\n")
         
-        # Dev Sold?
         dev_sold = token_data.get("dev_sold", False)
-        dev_status = "[red]YES (SOLD)[/]" if dev_sold else "[green]NO (HOLDING)[/]"
-        lines.append(f"[b]Dev Sold:[/b] {dev_status}")
+        content.append("Dev Sold: ", style="bold")
+        if dev_sold:
+            content.append("YES (SOLD)\n", style="red")
+        else:
+            content.append("NO (HOLDING)\n", style="green")
 
-        
         # Metadata / Image
         if "metadata" in token_data:
             meta = token_data["metadata"]
-            lines.append("\n[b][u]Metadata (Live)[/u][/b]")
+            content.append("\nMetadata (Live)\n", style="bold underline")
             
-            if "image" in meta:
-                 lines.append(f"[b]Image:[/b] [link={meta['image']}]View Token Image[/link]")
+            # Update Image Widget separately
+            image_widget = self.query_one("#detail_image", Static)
+            if "ansi_image" in token_data:
+                image_widget.update(Text.from_ansi(token_data["ansi_image"]))
+                image_widget.display = True
+            elif "image" in meta:
+                 content.append("Image: ", style="bold")
+                 content.append("View Original Image\n", style="link " + meta['image'] if isinstance(meta['image'], str) else "")
+                 image_widget.display = False
+            else:
+                 image_widget.display = False
             
             if "description" in meta:
                 desc = meta["description"]
-                if len(desc) > 200:
-                    desc = desc[:197] + "..."
-                lines.append(f"[b]Description:[/b] {desc}")
+                if desc:
+                    if len(desc) > 300:
+                        desc = desc[:297] + "..."
+                    content.append("Description: ", style="bold")
+                    content.append(f"{desc}\n")
             
-            # Socials
-            social_links = []
-            for s_key in ["twitter", "telegram", "website"]:
-                if s_key in meta:
-                    social_links.append(f"[link={meta[s_key]}]{s_key.capitalize()}[/link]")
-            if social_links:
-                lines.append(f"[b]Socials:[/b] {' | '.join(social_links)}")
+            # Socials & Others
+            social_links_found = False
+            known_socials = ["twitter", "telegram", "website", "discord", "github", "medium", "instagram"]
+            
+            # First collect all valid links
+            all_links = []
+            for s_key in known_socials:
+                s_val = meta.get(s_key)
+                if s_val and isinstance(s_val, str) and s_val.strip():
+                    all_links.append((s_key.capitalize(), s_val))
+            
+            links_dict = meta.get("links")
+            if isinstance(links_dict, dict):
+                for l_key, l_val in links_dict.items():
+                    if l_val and isinstance(l_val, str) and l_key not in known_socials:
+                        all_links.append((l_key.capitalize(), l_val))
+
+            if all_links:
+                content.append("Links: ", style="bold")
+                for i, (label, url) in enumerate(all_links):
+                    content.append(label, style="link " + url)
+                    if i < len(all_links) - 1:
+                        content.append(" | ")
+                content.append("\n")
+            
+            if "error" in meta:
+                content.append(f"\nMetadata Fetch Error: {meta['error']}\n", style="red")
+                 
         elif "uri" in token_data and "metadata_fetching" not in token_data:
             # Trigger fetch if URI exists and not already fetching/fetched
             token_data["metadata_fetching"] = True
             asyncio.create_task(self.fetch_and_update(token_data))
-            lines.append("\n[i]Fetching metadata...[/i]")
+            content.append("\nFetching metadata...\n", style="italic")
 
-        lines.append("\n[b]--- All Data ---[/b]")
+        content.append("\n--- All Data ---\n", style="bold")
         for k, v in token_data.items():
-            if k not in priority_keys and k != "metadata" and k != "metadata_fetching":
-                lines.append(f"[b]{k}:[/b] {v}")
+            if k not in priority_keys and k not in ["metadata", "metadata_fetching", "ansi_image"]:
+                content.append(f"{k}: ", style="bold")
+                content.append(f"{v}\n")
                 
-        content = "\n".join(lines)
-        self.query_one("#detail_content", Static).update(content)
+        try:
+            self.query_one("#detail_content", Static).update(content)
+        except Exception as e:
+            with open("debug_stream.log", "a") as f:
+                 f.write(f"RENDER ERROR: {e}\n")
+            self.query_one("#detail_content", Static).update("Rendering error. Check logs.")
+
 
     async def fetch_and_update(self, token_data: Dict[str, Any]) -> None:
         """Async fetch metadata."""
         uri = token_data.get("uri")
+        mint = token_data.get("mint", "unknown")
+        with open("debug_stream.log", "a") as f:
+            f.write(f"Starting fetch_and_update for {mint} (URI: {uri})\n")
+            
         if uri:
             try:
                 metadata = await fetch_token_metadata(uri)
                 with open("debug_stream.log", "a") as f:
-                    f.write(f"Fetched metadata for {uri[:20]}...: {str(metadata)[:100]}\n")
+                    f.write(f"Metadata received for {mint}: {str(metadata)[:100]}\n")
+
             except Exception as e:
                 with open("debug_stream.log", "a") as f:
                     f.write(f"Error fetching metadata {uri}: {e}\n")
@@ -343,13 +417,32 @@ class TokenDetail(Static):
                 
             if metadata:
                 token_data["metadata"] = metadata
+                
+                # Refresh UI immediately to show metadata while image is rendering
+                if self.current_token and self.current_token.get("mint") == token_data.get("mint"):
+                    self.call_later(self.update_token, token_data)
+
+                # Now trigger image rendering if image URL exists
+                image_url = metadata.get("image")
+                if image_url:
+                    try:
+                        # Use 18 wide (approx 90-120px)
+                        ansi = await render_image_to_ansi(image_url, width=18)
+                        token_data["ansi_image"] = ansi
+                    except Exception as e:
+                        with open("debug_stream.log", "a") as f:
+                            f.write(f"Image Render Error for {image_url}: {e}\n")
+
+                # Final refresh with image
+                if self.current_token and self.current_token.get("mint") == token_data.get("mint"):
+                    self.call_later(self.update_token, token_data)
             else:
                 token_data["metadata"] = {"error": "Failed to fetch"}
+                if self.current_token and self.current_token.get("mint") == token_data.get("mint"):
+                    self.call_later(self.update_token, token_data)
             
             # Remove fetching flag
             if "metadata_fetching" in token_data:
                 del token_data["metadata_fetching"]
-            
-            # Refresh view if this is still the current token
-            if self.current_token and self.current_token.get("mint") == token_data.get("mint"):
-                self.update_token(token_data)
+
+

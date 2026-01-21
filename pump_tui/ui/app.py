@@ -7,7 +7,7 @@ from textual.binding import Binding
 from ..api import PumpPortalClient
 from ..helpers import get_env_var
 from .widgets import TokenTable, TokenDetail
-from .screens import SettingsView, InfoView
+from .screens import SettingsView, InfoView, WalletTrackerView
 from .wallet_screen import WalletView
 
 class PumpApp(App):
@@ -109,6 +109,8 @@ class PumpApp(App):
                     yield TokenDetail(id="detail_view")
             
             # Other tabs (placeholders or settings)
+            with TabPane("Wallet Tracker", id="tracker"):
+                yield WalletTrackerView()
             with TabPane("Wallet Manager", id="wallet"):
                 yield WalletView(id="wallet_view")
             with TabPane("Trending", id="trending"):
@@ -123,20 +125,31 @@ class PumpApp(App):
         """Refresh the current view."""
         self.notify("Streaming is active. No manual refresh needed.")
 
+    # We catch any DataTable events bubbling up from TokenTable
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        """Handle row selection from the table."""
+        self._handle_row_event(event)
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        self._handle_row_event(event)
+
+    def _handle_row_event(self, event: DataTable.RowSelected | DataTable.RowHighlighted) -> None:
+        """Centralized handler for row interactions."""
         try:
             row_key = event.row_key.value
-            table = self.query_one("#table_new", TokenTable)
+            table_widget = self.query_one("#table_new", TokenTable)
             
-            # Retrieve data from table store
-            token_data = table.data_store.get(row_key)
+            # Retrieve data from table's data_store
+            token_data = table_widget.data_store.get(row_key)
+            
+            with open("debug_stream.log", "a") as f:
+                f.write(f"WIDGET EVENT: {type(event).__name__} for {row_key}. Found: {token_data is not None}\n")
+            
             if token_data:
                 self.query_one("#detail_view", TokenDetail).update_token(token_data)
-            else:
-                self.notify("Token detail not found.", severity="warning")
         except Exception as e:
-            self.notify(f"Selection error: {e}", severity="error")
+            # Silently log errors to debug_stream
+            with open("debug_stream.log", "a") as f:
+                 f.write(f"Selection Event Error: {e}\n")
 
 
 if __name__ == "__main__":

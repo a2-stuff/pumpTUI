@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+import subprocess
+import sys
+import os
+
+def start():
+    """Start the pumpTUI application."""
+    print("Starting pumpTUI...")
+    try:
+        # Run the app module
+        subprocess.run([sys.executable, "-m", "pump_tui.ui.app"])
+    except KeyboardInterrupt:
+        print("\nExiting pumpTUI.")
+    except Exception as e:
+        print(f"Error starting app: {e}")
+
+def stop():
+    """Stop any running pumpTUI processes."""
+    print("Searching for running pumpTUI processes...")
+    try:
+        # Use pkill -f to find processes matching the app module path
+        result = subprocess.run(["pkill", "-f", "pump_tui.ui.app"], capture_output=True, text=True)
+        if result.returncode == 0:
+            print("Successfully stopped pumpTUI.")
+        else:
+            print("No running pumpTUI processes found.")
+    except Exception as e:
+        print(f"Error stopping app: {e}")
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python3 manage.py [start|stop]")
+        sys.exit(1)
+    
+    cmd = sys.argv[1].lower()
+    if cmd == "start":
+        start()
+    elif cmd == "stop":
+        stop()
+    else:
+        print(f"Unknown command: {cmd}")
+        print("Usage: python3 manage.py [start|stop]")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

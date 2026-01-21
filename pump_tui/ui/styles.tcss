@@ -75,11 +75,33 @@ Tab.-active {
 }
 
 #detail_view {
-    width: 55%;
+    width: 60%;
     height: 1fr;
-    padding: 2;
+    padding: 1;
     background: #1e1e2e;
     color: #cdd6f4;
+}
+
+#detail_layout {
+    layout: horizontal;
+    height: 1fr;
+    width: 100%;
+}
+
+#detail_text_container {
+    width: 1fr;
+    height: 1fr;
+    overflow-y: scroll;
+    padding-right: 32;
+}
+
+.image-container {
+    width: 20; /* 18 renderer + border */
+    height: 10; /* square pixels = 18 height, ▀ blocks = 9 lines. 10 with border. */
+    border: tall #89b4fa;
+    background: #11111b;
+    dock: right;
+    margin: 0 10 1 1; /* margin-top:0 (1 up), margin-right:10 (1 left from 9) */
 }
 
 /* Data Tables */

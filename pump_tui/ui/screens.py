@@ -39,3 +39,10 @@ Design inspired by [Dolphie](https://github.com/charles-001/dolphie).
     """
     def compose(self) -> ComposeResult:
          yield Markdown(self.MD_CONTENT)
+
+class WalletTrackerView(Container):
+    def compose(self) -> ComposeResult:
+        yield Label("Wallet Tracker", classes="title")
+        yield Static("Enter a wallet address to track its activity (coming soon).", classes="info-text")
+        yield Input(placeholder="Enter Solana Wallet Address...", id="tracker_address")
+        yield Button("Track Wallet", variant="primary", id="btn_track")
