@@ -1,0 +1,205 @@
+/* Global Styles */
+Screen {
+    background: #11111b; /* Dark background */
+    color: #cdd6f4;
+}
+
+/* Header */
+Header {
+    dock: top;
+    height: 1;
+    background: #1e1e2e;
+    color: #89b4fa; /* Blueish */
+    content-align: center middle;
+    text-style: bold;
+}
+
+/* Footer */
+Footer {
+    dock: bottom;
+    height: 1;
+    background: #1e1e2e;
+    color: #a6adc8;
+}
+
+/* Tabs */
+TabbedContent {
+    height: 1fr;
+    background: #11111b;
+}
+
+ContentSwitcher {
+    height: 1fr;
+    background: #11111b;
+}
+
+TabPane {
+    padding: 1;
+    background: #11111b;
+}
+
+Tabs {
+    background: #1e1e2e;
+    dock: top;
+    color: #a6adc8;
+}
+
+Tabs:focus .underline {
+    color: #89b4fa;
+}
+
+Tab {
+    color: #a6adc8;
+}
+
+Tab:focus {
+    color: #89b4fa;
+}
+
+Tab.-active {
+    color: #89b4fa;
+    text-style: bold;
+}
+
+/* Split Layout */
+.split-container {
+    layout: horizontal;
+    height: 1fr;
+    background: #11111b;
+}
+
+#table_new {
+    width: 45%;
+    height: 1fr;
+    border-right: tall #1e1e2e;
+}
+
+#detail_view {
+    width: 55%;
+    height: 1fr;
+    padding: 2;
+    background: #1e1e2e;
+    color: #cdd6f4;
+}
+
+/* Data Tables */
+TokenTable {
+    layout: vertical;
+    height: 1fr;
+    width: 100%;
+}
+
+DataTable {
+    background: #181825;
+    border: tall #89b4fa; /* Cyan/Blue border */
+    scrollbar-background: #1e1e2e;
+    scrollbar-color: #89b4fa;
+    height: 1fr;
+}
+
+.pagination-controls {
+    height: 3;
+    dock: bottom;
+    align: center middle;
+    background: #1e1e2e;
+    padding: 0 1;
+}
+
+.pagination-controls Button {
+    width: 16;
+    margin: 0 1;
+    background: #313244;
+}
+
+.pagination-controls Label {
+    margin: 1 2;
+    text-style: bold;
+    color: #f9e2af;
+}
+
+DataTable > .datatable--header {
+    background: #313244;
+    color: #89b4fa;
+    text-style: bold;
+}
+
+DataTable > .datatable--cursor {
+    background: #89b4fa;
+    color: #1e1e2e;
+    text-style: bold;
+}
+
+#search_input {
+    dock: top;
+    height: 3;
+    padding: 0 1;
+    border: tall #1e1e2e;
+    background: #181825;
+    color: #cdd6f4;
+}
+
+.compact-btn {
+    height: 3;
+    min-width: 12;
+    padding: 0 1;
+    margin: 0 1; 
+    border: none;
+    background: #45475a; 
+}
+.compact-btn:hover {
+    background: #585b70;
+}
+
+/* Settings & Info */
+.title {
+    content-align: center middle;
+    text-style: bold;
+    color: #f9e2af; /* Yellowish */
+    margin: 1;
+}
+
+Input {
+    border: tall #89b4fa;
+    background: #1e1e2e;
+    color: #cdd6f4;
+}
+
+Input:focus {
+    border: tall #a6e3a1; /* Green */
+}
+
+Button {
+    background: #89b4fa;
+    color: #1e1e2e;
+    width: 100%;
+    margin-top: 1;
+}
+
+Button:hover {
+    background: #a6e3a1;
+}
+
+Markdown {
+    background: #181825;
+    padding: 2;
+    color: #cdd6f4;
+}
+
+Markdown H1 {
+    color: #89b4fa;
+    background: #11111b;
+}
+
+.wallet-actions {
+    height: 4;
+    align: center middle;
+}
+
+.import-area {
+    height: 4;
+    margin-top: 1;
+}
+
+.input-pk {
+    width: 3fr;
+}
