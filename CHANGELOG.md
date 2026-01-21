@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.1.5] - 2026-01-21
+
+### Added
+- **Wallet Manager Enhancements**:
+  - New **Created** column showing when a wallet was added.
+  - New **Txs** column showing live transaction counts for all wallets.
+  - **Copy Address** button to quickly get your own wallet CA.
+  - **Delete Selected** button with safety checks.
+- **Contextual Hotkeys**:
+  - Trade `(b)` and Copy CA `(c)` hotkeys now only appear in the footer when on the **New Tokens** tab.
+  - Unified notification style for better visual feedback.
+
+### Fixed
+- **Wallet Balance**: Resolved an issue where balances would stay stuck on "Checking..." due to RPC timeouts.
+- **Hotkey Stability**: Fixed an async/sync mismatch that caused `b` and `c` keys to be unresponsive.
+
 ## [v1.1.4] - 2026-01-21
 
 ### Added

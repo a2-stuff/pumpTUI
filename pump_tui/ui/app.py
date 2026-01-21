@@ -74,29 +74,41 @@ class SystemHeader(Container):
             latency_ms = 0
             if hasattr(self.app, "api_client") and self.app.api_client.websocket and self.app.api_client.running:
                  try:
-                     import time
-                     start = time.perf_counter()
-                     # sending a ping and waiting for pong (if supported by lib version, otherwise might need await)
-                     # Since this is sync, we can't await. We can check if the library has updated latency from background pings
-                     # or we just rely on the property if it eventually updates.
-                     # If the property is 0, let's try to assume it's just very fast or not updated yet.
-                     
-                     # Check if we can get it from the protocol state
                      ws = self.app.api_client.websocket
                      if hasattr(ws, "latency"):
                          latency_ms = int(ws.latency * 1000)
-                     
-                 except Exception:
+                 except:
                      latency_ms = 0
 
-                     latency_ms = 0
+            # Identify colors based on thresholds
+            v_color = "red" if velocity < 10 else "yellow" if velocity <= 15 else "green"
+            l_color = "green" if latency_ms <= 100 else "yellow" if latency_ms <= 180 else "red"
+            c_color = "green" if cpu <= 60 else "yellow" if cpu <= 80 else "red"
+            m_color = "green" if mem <= 60 else "yellow" if mem <= 80 else "red"
+            
+            # RPC Latency colors
+            rpc_lat = getattr(self.app, "rpc_latency", 0)
+            if rpc_lat < 0:
+                rpc_color = "red"
+                rpc_str = "Error"
+            else:
+                rpc_color = "green" if rpc_lat <= 150 else "yellow" if rpc_lat <= 300 else "red"
+                rpc_str = f"{rpc_lat}ms"
 
-            self.query_one("#header_stats", Label).update(f"Velocity: {velocity} tpm  Latency: {latency_ms}ms  CPU: {cpu:.0f}% Mem: {mem:.0f}%  {time_str}")
+            stats_msg = (
+                f"Velocity: [{v_color}]{velocity} tpm[/]  "
+                f"RPC: [{rpc_color}]{rpc_str}[/]  "
+                f"Latency: [{l_color}]{latency_ms}ms[/]  "
+                f"CPU: [{c_color}]{cpu:.0f}%[/] "
+                f"Mem: [{m_color}]{mem:.0f}%[/]  "
+                f"{time_str}"
+            )
+            self.query_one("#header_stats", Label).update(Text.from_markup(stats_msg))
 
 class PumpApp(App):
     """A Textual app to view Pump.fun tokens."""
 
-    TITLE = "pumpTUI v1.1.4"
+    TITLE = "pumpTUI v1.1.5"
     CSS_PATH = "styles.tcss"
     BINDINGS = [
         Binding("q", "quit", "Quit"),
@@ -133,6 +145,7 @@ class PumpApp(App):
         self.token_timestamps = [] # Track timestamps of new tokens
         self.sol_price = 0.0
         self.btc_price = 0.0
+        self.rpc_latency = 0 # New RPC latency tracker
 
     async def on_mount(self) -> None:
         """Called when app is mounted."""
@@ -140,6 +153,9 @@ class PumpApp(App):
         startup = StartupScreen()
         self.push_screen(startup)
         
+        # Start background tasks
+        self.set_interval(10.0, self.update_rpc_latency)
+        asyncio.create_task(self.update_rpc_latency())
         # Start the WebSocket stream background task
         asyncio.create_task(self.stream_tokens())
 
@@ -160,6 +176,21 @@ class PumpApp(App):
         # Start Price Ticker
         self.set_interval(10.0, self.update_market_prices)
         asyncio.create_task(self.update_market_prices())
+
+    async def update_rpc_latency(self) -> None:
+        """Measure RPC Latency via getHealth call."""
+        import time
+        import httpx
+        from ..config import config
+        
+        start = time.perf_counter()
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                payload = {"jsonrpc": "2.0", "id": 1, "method": "getHealth"}
+                await client.post(config.rpc_url, json=payload)
+            self.rpc_latency = int((time.perf_counter() - start) * 1000)
+        except:
+            self.rpc_latency = -1 # Error state
 
     async def update_market_prices(self) -> None:
         """Fetch and update SOL/BTC prices."""
@@ -203,6 +234,37 @@ class PumpApp(App):
                  asyncio.create_task(self.cleanup_and_exit())
         
         self.push_screen(QuitScreen(), check_quit)
+
+    def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        """Refresh footer when tab changes to show/hide contextual keys."""
+        self.refresh_bindings()
+
+    def get_bindings(self) -> list[Binding]:
+        """Standard bindings with contextual visibility filter."""
+        # Get base bindings (class level)
+        base_bindings = super().get_bindings()
+        
+        try:
+            tab_content = self.query_one(TabbedContent)
+            active_tab = tab_content.active
+            
+            # Contextual check: only show B and C on "new" tab with a selection
+            if active_tab == "new":
+                try:
+                    table_widget = self.query_one("#table_new", TokenTable)
+                    # Check if any row is selected/highlighted
+                    if table_widget.table.cursor_row < 0:
+                         return [b for b in base_bindings if b.key not in ("b", "c")]
+                except:
+                    pass
+            else:
+                # Not on New Tokens tab, hide B and C
+                return [b for b in base_bindings if b.key not in ("b", "c")]
+                
+        except:
+            pass
+        
+        return base_bindings
 
     async def cleanup_and_exit(self) -> None:
         """Clean up resources and exit."""
@@ -284,11 +346,10 @@ class PumpApp(App):
     
     async def action_trade_token(self) -> None:
         """Open trade modal for the currently selected token."""
-        # Get the active tab's TokenTable
         try:
             active_tab = self.query_one(TabbedContent).active
-            if active_tab in ["new", "trending"]:
-                table_id = "#table_new" if active_tab == "new" else "#table_trending"
+            if active_tab == "new":
+                table_id = "#table_new"
                 token_table = self.query_one(table_id, TokenTable)
                 
                 # Get selected token data
@@ -300,7 +361,7 @@ class PumpApp(App):
                     # Open trade modal
                     await self.push_screen(TradeModal(selected_token, data_provider=data_provider))
                 else:
-                    self.notify("No token selected. Select a token first.", severity="warning")
+                    self.notify("No token selected. Focus the table and select a token first.", variant="warning")
             else:
                 self.notify("Trading is only available from New Tokens or Volume tabs.", severity="warning")
         except Exception as e:
@@ -310,8 +371,8 @@ class PumpApp(App):
         """Copy the selected token's contract address to clipboard."""
         try:
             active_tab = self.query_one(TabbedContent).active
-            if active_tab in ["new", "trending"]:
-                table_id = "#table_new" if active_tab == "new" else "#table_trending"
+            if active_tab == "new":
+                table_id = "#table_new"
                 token_table = self.query_one(table_id, TokenTable)
                 selected_token = token_table.get_selected_token()
                 
@@ -363,7 +424,7 @@ class PumpApp(App):
                     else:
                         self.notify("No Mint address found for this token.", variant="error")
                 else:
-                    self.notify("No token selected to copy.", variant="warning")
+                    self.notify("No token selected to copy. Focus the table first.", variant="warning")
         except Exception as e:
             self.notify(f"Error copying CA: {e}", variant="error")
 

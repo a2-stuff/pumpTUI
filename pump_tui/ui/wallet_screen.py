@@ -1,12 +1,13 @@
 from textual.app import ComposeResult
 from textual.containers import Vertical, Horizontal
 from textual.widgets import Static, Button, Input, Label, DataTable
+from textual.widget import Widget
 from textual.screen import Screen, ModalScreen
 from ..helpers import save_env_var, get_env_var, load_wallets, save_wallet, delete_wallet, set_active_wallet
 from ..api import PumpPortalClient
 import asyncio
 
-class WalletView(Static):
+class WalletView(Vertical):
     """Screen for managing multiple wallets."""
 
     def __init__(self, id: str = None):
@@ -15,23 +16,24 @@ class WalletView(Static):
         self.wallets_table = DataTable()
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="wallet_container"):
-            yield Static("Wallet Manager", classes="title")
+        yield Static("Wallet Manager", classes="title")
             
-            # Action Bar
-            with Horizontal(classes="wallet-actions"):
-                yield Button("Generate New", id="btn_generate", classes="compact-btn", variant="warning")
-                yield Button("Refresh All", id="btn_refresh", classes="compact-btn")
-            # Table
-            yield self.wallets_table
+        # Action Bar
+        with Horizontal(classes="wallet-actions"):
+            yield Button("Generate New", id="btn_generate", classes="compact-btn", variant="warning")
+            yield Button("Refresh All", id="btn_refresh", classes="compact-btn")
+            yield Button("Copy Address", id="btn_copy", classes="compact-btn")
+            yield Button("Delete Selected", id="btn_delete", classes="compact-btn", variant="error")
+        # Table
+        yield self.wallets_table
 
-            # Import Section
-            with Horizontal(classes="import-area"):
-                yield Input(placeholder="Private Key", password=True, id="input_pk", classes="input-pk")
-                yield Input(placeholder="Public Key (Required)", id="input_pub", classes="input-pk")
-                yield Button("Import", id="btn_import", classes="compact-btn")
+        # Import Section
+        with Horizontal(classes="import-area"):
+            yield Input(placeholder="Private Key", password=True, id="input_pk", classes="input-pk")
+            yield Input(placeholder="Public Key (Required)", id="input_pub", classes="input-pk")
+            yield Button("Import", id="btn_import", classes="compact-btn")
             
-            yield Static("", id="status_msg")
+        yield Static("", id="status_msg")
 
     def on_mount(self) -> None:
         self.wallets_table.cursor_type = "row"
@@ -71,8 +73,56 @@ class WalletView(Static):
             self.import_wallet()
         elif event.button.id == "btn_refresh":
             self.check_all_balances()
+        elif event.button.id == "btn_copy":
+            self.copy_selected_address()
         elif event.button.id == "btn_delete":
             self.delete_selected()
+
+    def copy_selected_address(self) -> None:
+        """Copy the selected wallet's address to clipboard."""
+        try:
+            # Check for current row
+            if self.wallets_table.cursor_row < 0:
+                self.app.notify("Select a wallet row first by clicking it.", variant="warning")
+                return
+                
+            row_key = self.wallets_table.get_cursor_row_key()
+            if row_key:
+                pub_key = str(row_key.value)
+                
+                # Robust Copy Logic
+                success = False
+                try:
+                    import base64
+                    import sys
+                    encoded = base64.b64encode(pub_key.encode('utf-8')).decode('utf-8')
+                    sys.stdout.write(f"\033]52;c;{encoded}\a")
+                    sys.stdout.flush()
+                    success = True
+                except: pass
+                
+                if not success:
+                    try:
+                        import subprocess
+                        subprocess.run(['wl-copy'], input=pub_key.encode(), capture_output=True)
+                        success = True
+                    except: pass
+                
+                if not success:
+                    try:
+                        import subprocess
+                        subprocess.run(['pbcopy'], input=pub_key.encode(), capture_output=True)
+                        success = True
+                    except: pass
+
+                if success:
+                    self.app.notify(f"Address Copied: {pub_key[:8]}...", variant="success")
+                else:
+                    self.app.notify(f"Clipboard Error. Address: {pub_key}", timeout=10)
+            else:
+                self.app.notify("Could not identify selected wallet key.", variant="error")
+        except Exception as e:
+            self.app.notify(f"Error copying address: {e}", variant="error")
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Handle row selection to set active wallet."""
@@ -129,14 +179,25 @@ class WalletView(Static):
 
     def delete_selected(self) -> None:
         try:
+            if self.wallets_table.cursor_row < 0:
+                 self.app.notify("Select a wallet row first by clicking it.", variant="warning")
+                 return
+                 
             row_key = self.wallets_table.get_cursor_row_key()
             if row_key:
-                pub_key = row_key.value
+                pub_key = str(row_key.value)
+                
+                # Show status before cleanup
+                self.query_one("#status_msg", Static).update(f"Deleting {pub_key[:8]}...")
+                
                 delete_wallet(pub_key)
                 self.load_wallets_into_table()
-                self.query_one("#status_msg", Static).update(f"Deleted {pub_key}")
-        except:
-            self.query_one("#status_msg", Static).update("Select a wallet to delete.")
+                self.app.notify(f"Wallet Deleted: {pub_key[:8]}...", variant="success")
+                self.query_one("#status_msg", Static).update("Wallet Deleted.")
+            else:
+                self.app.notify("Could not identify selected wallet to delete.", variant="error")
+        except Exception as e:
+            self.app.notify(f"Error deleting wallet: {e}", variant="error")
 
     def check_all_balances(self) -> None:
         wallets = load_wallets()

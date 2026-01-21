@@ -305,3 +305,21 @@ Markdown H1 {
     margin-top: 1;
     text-style: italic;
 }
+
+/* Wallet Manager Layout */
+WalletView {
+    layout: vertical;
+    width: 100%;
+    height: 100%;
+}
+
+#wallet_container {
+    height: 100%;
+    width: 100%;
+}
+
+#status_msg {
+    margin-top: 1;
+    height: 1;
+    color: #a6adc8;
+}

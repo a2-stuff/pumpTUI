@@ -449,6 +449,13 @@ class TokenTable(Widget):
             self.table.scroll_to(scroll_x, scroll_y, animate=False)
         except:
             pass
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """Update app bindings when cursor moves to show/hide contextual keys."""
+        try:
+            self.app.refresh_bindings()
+        except:
+            pass
             
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Handle double-click to open trade modal."""
