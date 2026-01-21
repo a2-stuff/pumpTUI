@@ -1,4 +1,5 @@
 from textual.widgets import DataTable, Button, Label, Input, Pretty, Static
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.app import ComposeResult
 from textual.widget import Widget
@@ -12,6 +13,11 @@ from ..config import config
 
 class TokenTable(Widget):
     """A widget to display a list of tokens with search."""
+
+    BINDINGS = [
+        Binding("b", "trade_token", "Trade"),
+        Binding("c", "copy_ca", "Copy CA"),
+    ]
 
     def __init__(self, fetch_method: Callable[[], Awaitable[List[Dict[str, Any]]]] = None, title: str = "Tokens", id: str = None):
         super().__init__(id=id)
@@ -448,6 +454,14 @@ class TokenTable(Widget):
             self.table.scroll_to(scroll_x, scroll_y, animate=False)
         except:
             pass
+            
+    def action_trade_token(self) -> None:
+        """Delegate trade action to app."""
+        self.app.action_trade_token()
+
+    def action_copy_ca(self) -> None:
+        """Delegate copy CA action to app."""
+        self.app.action_copy_ca()
             
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Handle double-click to open trade modal."""

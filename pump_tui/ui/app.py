@@ -101,8 +101,6 @@ class PumpApp(App):
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("n", "switch_to_new", "New Tokens"),
-        Binding("b", "trade_token", "Trade"),
-        Binding("c", "copy_ca", "Copy CA"),
         Binding("v", "switch_to_volume", "Volume"),
         Binding("t", "switch_to_tracker", "Tracker"),
         Binding("w", "switch_to_wallets", "Wallets"),
