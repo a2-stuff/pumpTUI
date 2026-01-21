@@ -123,10 +123,27 @@ class TokenTable(Widget):
                 # Update Tx and Holders
                 tx_col = self.column_keys.get("Tx")
                 holders_col = self.column_keys.get("Holders")
+                
+                tx_count = stored_item.get("tx_count", 0)
+                if tx_count > 50:
+                    tx_style = "green"
+                elif tx_count >= 16:
+                    tx_style = "yellow"
+                else:
+                    tx_style = "red"
+                
+                traders_count = len(stored_item.get("traders", set()))
+                if traders_count > 50:
+                    h_style = "green"
+                elif traders_count >= 20:
+                    h_style = "yellow"
+                else:
+                    h_style = "red"
+
                 if tx_col:
-                     self.table.update_cell(mint, tx_col, str(stored_item.get("tx_count", 0)))
+                     self.table.update_cell(mint, tx_col, Text.from_markup(f"[{tx_style}]{tx_count}[/]"))
                 if holders_col:
-                     self.table.update_cell(mint, holders_col, str(len(stored_item.get("traders", set()))))
+                     self.table.update_cell(mint, holders_col, Text.from_markup(f"[{h_style}]{traders_count}[/]"))
             except Exception:
                 # Silently fail if row not in table (paginated out)
                 pass
@@ -270,10 +287,25 @@ class TokenTable(Widget):
             if len(mint) > 10:
                 display_mint = f"{mint[:4]}...{mint[-4:]}"
                 
-            tx_count = str(item.get("tx_count", 1))
-            holders = str(len(item.get("traders", set())))
+            tx_val = item.get("tx_count", 1)
+            if tx_val > 50:
+                tx_style = "green"
+            elif tx_val >= 16:
+                tx_style = "yellow"
+            else:
+                tx_style = "red"
+            tx_count = f"[{tx_style}]{tx_val}[/]"
             
-            self.table.add_row(display_mint, name, symbol, Text.from_markup(market_cap), tx_count, holders, created, key=mint)
+            h_val = len(item.get("traders", set()))
+            if h_val > 50:
+                h_style = "green"
+            elif h_val >= 20:
+                h_style = "yellow"
+            else:
+                h_style = "red"
+            holders = f"[{h_style}]{h_val}[/]"
+            
+            self.table.add_row(display_mint, name, symbol, Text.from_markup(market_cap), Text.from_markup(tx_count), Text.from_markup(holders), created, key=mint)
         
         # Update controls
         self.query_one("#page_label", Label).update(f"Page {self.current_page} (Total: {len(source_list)})")
