@@ -28,6 +28,10 @@ class TokenTable(Widget):
         self.current_page = 1
         self.page_size = 35
         self.max_history = 1000
+        self._last_render_time = 0.0
+        self._last_click_time = 0.0
+        self._last_clicked_row = None
+        self._pending_updates = False
 
     def compose(self) -> ComposeResult:
         yield Input(placeholder="Search by Name, Ticker, or Mint...", id="search_input")
@@ -152,6 +156,14 @@ class TokenTable(Widget):
                 self.table.update_cell(mint, age_col, age_str)
             except Exception:
                 pass
+        
+        # If there are pending new token renders, do it now (batching)
+        if hasattr(self, "_pending_updates") and self._pending_updates:
+            now = time.time()
+            if now - self._last_render_time >= 1.0:
+                self._last_render_time = now
+                self._pending_updates = False
+                self.render_page()
     
     def get_selected_token(self) -> Optional[Dict[str, Any]]:
         """Get the currently selected/highlighted token's data."""
@@ -404,6 +416,15 @@ class TokenTable(Widget):
                     should_render = False
 
             if should_render:
+                # Throttle rendering to max 1 per second to keep UI responsive
+                now = time.time()
+                if now - self._last_render_time < 1.0:
+                    self._pending_updates = True
+                    return
+                
+                self._last_render_time = now
+                self._pending_updates = False
+                
                 # Store cursor and scroll position
                 coord = self.table.cursor_coordinate
                 scroll_x, scroll_y = self.table.scroll_offset
@@ -427,6 +448,19 @@ class TokenTable(Widget):
             self.table.scroll_to(scroll_x, scroll_y, animate=False)
         except:
             pass
+            
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Handle double-click to open trade modal."""
+        now = time.time()
+        row_key = event.row_key.value
+        
+        if self._last_clicked_row == row_key and now - self._last_click_time < 0.4:
+            # Double click detected
+            self.app.action_trade_token()
+            self._last_clicked_row = None # Reset
+        else:
+            self._last_click_time = now
+            self._last_clicked_row = row_key
 
     def render_page(self):
 

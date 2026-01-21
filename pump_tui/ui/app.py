@@ -101,6 +101,8 @@ class PumpApp(App):
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("n", "switch_to_new", "New Tokens"),
+        Binding("b", "trade_token", "Trade"),
+        Binding("c", "copy_ca", "Copy CA"),
         Binding("v", "switch_to_volume", "Volume"),
         Binding("t", "switch_to_tracker", "Tracker"),
         Binding("w", "switch_to_wallets", "Wallets"),
@@ -108,7 +110,6 @@ class PumpApp(App):
         Binding("s", "focus_search", "Search"),
         Binding("i", "switch_to_info", "Info"),
         Binding("r", "refresh", "Refresh Data"),
-        Binding("b", "trade_token", "Trade"),
     ]
     
     def safe_focus(self, selector: str, sub_selector: str = None) -> None:
@@ -303,7 +304,58 @@ class PumpApp(App):
             else:
                 self.notify("Trading is only available from New Tokens or Volume tabs.", severity="warning")
         except Exception as e:
-            self.notify(f"Error opening trade modal: {e}", severity="error")
+            self.notify(f"Error opening trade modal: {e}", variant="error")
+
+    async def action_copy_ca(self) -> None:
+        """Copy the selected token's contract address to clipboard."""
+        try:
+            active_tab = self.query_one(TabbedContent).active
+            if active_tab in ["new", "trending"]:
+                table_id = "#table_new" if active_tab == "new" else "#table_trending"
+                token_table = self.query_one(table_id, TokenTable)
+                selected_token = token_table.get_selected_token()
+                
+                if selected_token:
+                    ca = selected_token.get("mint")
+                    if ca:
+                        # Attempt to copy to clipboard via subprocess for robustness
+                        import subprocess
+                        success = False
+                        
+                        # Try xclip (Linux/X11)
+                        try:
+                            process = subprocess.Popen(['xclip', '-selection', 'clipboard'], stdin=subprocess.PIPE)
+                            process.communicate(input=ca.encode('utf-8'))
+                            if process.returncode == 0: success = True
+                        except: pass
+                        
+                        # Try wl-copy (Linux/Wayland)
+                        if not success:
+                            try:
+                                process = subprocess.Popen(['wl-copy'], stdin=subprocess.PIPE)
+                                process.communicate(input=ca.encode('utf-8'))
+                                if process.returncode == 0: success = True
+                            except: pass
+                            
+                        # Try pbcopy (macOS)
+                        if not success:
+                            try:
+                                process = subprocess.Popen(['pbcopy'], stdin=subprocess.PIPE)
+                                process.communicate(input=ca.encode('utf-8'))
+                                if process.returncode == 0: success = True
+                            except: pass
+
+                        if success:
+                            self.notify(f"Copied CA: {ca[:8]}...", variant="success")
+                        else:
+                            # Fallback: Notify user of the full CA if copy failed
+                            self.notify(f"Clipboard failed. CA: {ca}", timeout=10)
+                    else:
+                        self.notify("No Mint address found for this token.", variant="error")
+                else:
+                    self.notify("No token selected to copy.", variant="warning")
+        except Exception as e:
+            self.notify(f"Error copying CA: {e}", variant="error")
 
     async def stream_tokens(self) -> None:
         """Listen to WS and update table."""
