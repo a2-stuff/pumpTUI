@@ -61,10 +61,10 @@ class PumpPortalClient:
                 raise Exception(f"Failed to create wallet: {response.text}")
 
     async def get_sol_balance(self, public_key: str) -> float:
-        """Get SOL balance via RPC (using httpx/json-rpc)."""
+        """Get SOL balance via RPC."""
         import httpx
-        # Use a public RPC or user provided? Defaulting to a reliable public one.
-        rpc_url = "https://api.mainnet-beta.solana.com" 
+        from .config import config
+        rpc_url = config.rpc_url
         
         payload = {
             "jsonrpc": "2.0",
@@ -73,14 +73,41 @@ class PumpPortalClient:
             "params": [public_key]
         }
         
-        async with httpx.AsyncClient() as client:
-            response = await client.post(rpc_url, json=payload)
-            if response.status_code == 200:
-                data = response.json()
-                if "result" in data and "value" in data["result"]:
-                    lamports = data["result"]["value"]
-                    return lamports / 1_000_000_000 # Convert to SOL
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            try:
+                response = await client.post(rpc_url, json=payload)
+                if response.status_code == 200:
+                    data = response.json()
+                    if "result" in data and "value" in data["result"]:
+                        lamports = data["result"]["value"]
+                        return lamports / 1_000_000_000
+            except:
+                pass
             return 0.0
+
+    async def get_tx_count(self, public_key: str) -> int:
+        """Get transaction count for a wallet."""
+        import httpx
+        from .config import config
+        rpc_url = config.rpc_url
+        
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getSignaturesForAddress",
+            "params": [public_key, {"limit": 1000}]
+        }
+        
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            try:
+                response = await client.post(rpc_url, json=payload)
+                if response.status_code == 200:
+                    data = response.json()
+                    if "result" in data:
+                        return len(data["result"])
+            except:
+                pass
+            return 0
 
     async def listen(self) -> AsyncGenerator[Dict[str, Any], None]:
         """Yield messages from the WebSocket."""

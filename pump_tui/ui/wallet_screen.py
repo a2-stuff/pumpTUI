@@ -35,7 +35,7 @@ class WalletView(Static):
 
     def on_mount(self) -> None:
         self.wallets_table.cursor_type = "row"
-        self.wallets_table.add_columns("Active", "Address", "Balance (SOL)")
+        self.wallets_table.add_columns("Active", "Address", "Balance (SOL)", "Created", "Txs")
         self.load_wallets_into_table()
 
     def load_wallets_into_table(self) -> None:
@@ -47,10 +47,19 @@ class WalletView(Static):
             pub = w.get("walletPublicKey", "Unknown")
             balance = w.get("balance", "Check...")
             
+            # Format timestamp
+            created_raw = w.get("created_at", "N/A")
+            created_str = created_raw
+            if isinstance(created_raw, (int, float)):
+                from datetime import datetime
+                created_str = datetime.fromtimestamp(created_raw).strftime("%Y-%m-%d %H:%M")
+            
+            txs = w.get("tx_count", "...")
+
             is_active = w.get("active", False)
             active_str = "[green][X][/]" if is_active else "[ ]"
             
-            self.wallets_table.add_row(active_str, pub, str(balance), key=pub)
+            self.wallets_table.add_row(active_str, pub, str(balance), created_str, str(txs), key=pub)
             
         # Trigger balance check for all
         self.check_all_balances()
@@ -87,6 +96,9 @@ class WalletView(Static):
             if "walletPublicKey" in data:
                 # Remove apiKey from data before saving - we only want it in .env
                 data.pop("apiKey", None)
+                data["created_at"] = asyncio.get_event_loop().time() # Use real time if possible, but let's use time.time()
+                import time
+                data["created_at"] = time.time()
                 save_wallet(data)
                 self.load_wallets_into_table()
                 self.query_one("#status_msg", Static).update("Wallet Generated!")
@@ -103,9 +115,11 @@ class WalletView(Static):
             self.query_one("#status_msg", Static).update("Enter both Private and Public Keys.")
             return
 
+        import time
         wallet_data = {
             "walletPublicKey": pub.strip(), 
-            "privateKey": pk.strip()
+            "privateKey": pk.strip(),
+            "created_at": time.time()
         }
         save_wallet(wallet_data)
         self.load_wallets_into_table()
@@ -128,15 +142,20 @@ class WalletView(Static):
         wallets = load_wallets()
         for w in wallets:
             pub = w.get("walletPublicKey")
-            if pub and not pub.startswith("Imported"):
+            if pub:
                 asyncio.create_task(self._update_balance(pub))
 
     async def _update_balance(self, pub_key: str):
         try:
-            bal = await self.api_client.get_sol_balance(pub_key)
-            # Update json?
-            # Ideally we don't save volatile balance to json, just update UI.
-            # But updating UI requires finding the row.
+            # Update both balance and tx count
+            bal_task = self.api_client.get_sol_balance(pub_key)
+            tx_task = self.api_client.get_tx_count(pub_key)
+            
+            bal, tx_count = await asyncio.gather(bal_task, tx_task)
+            
+            # Update UI
             self.wallets_table.update_cell(pub_key, "Balance (SOL)", f"{bal:.4f}")
-        except:
+            self.wallets_table.update_cell(pub_key, "Txs", str(tx_count))
+        except Exception:
              self.wallets_table.update_cell(pub_key, "Balance (SOL)", "Error")
+             self.wallets_table.update_cell(pub_key, "Txs", "!")
