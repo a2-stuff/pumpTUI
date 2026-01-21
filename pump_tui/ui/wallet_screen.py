@@ -35,7 +35,7 @@ class WalletView(Static):
 
     def on_mount(self) -> None:
         self.wallets_table.cursor_type = "row"
-        self.wallets_table.add_columns("Active", "Address", "Balance (SOL)", "API Key")
+        self.wallets_table.add_columns("Active", "Address", "Balance (SOL)")
         self.load_wallets_into_table()
 
     def load_wallets_into_table(self) -> None:
@@ -45,15 +45,12 @@ class WalletView(Static):
         
         for w in wallets:
             pub = w.get("walletPublicKey", "Unknown")
-            api_key = w.get("apiKey", "N/A")
-            # Mask API Key
-            masked_key = f"{api_key[:4]}...{api_key[-4:]}" if len(api_key) > 10 else api_key
             balance = w.get("balance", "Check...")
             
             is_active = w.get("active", False)
             active_str = "[green][x][/]" if is_active else "[ ]"
             
-            self.wallets_table.add_row(active_str, pub, str(balance), masked_key, key=pub)
+            self.wallets_table.add_row(active_str, pub, str(balance), key=pub)
             
         # Trigger balance check for all
         self.check_all_balances()
@@ -88,6 +85,8 @@ class WalletView(Static):
         try:
             data = await self.api_client.create_wallet()
             if "walletPublicKey" in data:
+                # Remove apiKey from data before saving - we only want it in .env
+                data.pop("apiKey", None)
                 save_wallet(data)
                 self.load_wallets_into_table()
                 self.query_one("#status_msg", Static).update("Wallet Generated!")
@@ -106,8 +105,7 @@ class WalletView(Static):
 
         wallet_data = {
             "walletPublicKey": pub.strip(), 
-            "privateKey": pk.strip(),
-            "apiKey": "Imported"
+            "privateKey": pk.strip()
         }
         save_wallet(wallet_data)
         self.load_wallets_into_table()
