@@ -18,10 +18,11 @@ class Config:
         self.thresholds = self.DEFAULT_THRESHOLDS.copy()
         # Trading configuration
         # Trading configuration
-        self.rpc_url = os.getenv("RPC_URL", "https://api.mainnet-beta.solana.com")
+        from .helpers import get_env_var
+        self.rpc_url = get_env_var("RPC_URL") or "https://api.mainnet-beta.solana.com"
         # Wallet is now managed via Wallet Manager (wallets.json)
-        self.default_slippage = float(os.getenv("DEFAULT_SLIPPAGE", "10"))
-        self.default_priority_fee = float(os.getenv("DEFAULT_PRIORITY_FEE", "0.005"))
+        self.default_slippage = float(get_env_var("DEFAULT_SLIPPAGE") or "10")
+        self.default_priority_fee = float(get_env_var("DEFAULT_PRIORITY_FEE") or "0.005")
         self.load()
 
     def load(self):

@@ -128,8 +128,11 @@ class PumpApp(App):
         # User provided key
         self.api_key = get_env_var("API_KEY")
         if not self.api_key:
-             self.api_key = "8hw2peb2a92q0ya475gkgnbdb4nmev9r9134gjkra9m4pc3m6ttqebup9dw6rwvh98tq8ub389jpcckg91pn2t3he8r34wb298r6yvb465vn4c9nat75euhgf1n62nbd84rn0mu7a4ykuathppthqa8rpcnbt6d87jbuh7471672yj65d2p4h3natpqjpb3ax2mwrba8hkkuf8"
-        self.api_client = PumpPortalClient(api_key=self.api_key)
+             # Look for key in wallets if not in .env (some users might put it there)
+             active_wallet = config.get_active_wallet()
+             self.api_key = active_wallet.get("apiKey")
+             
+        self.api_client = PumpPortalClient(api_key=self.api_key or "")
         self.dex_client = DexScreenerClient()
         self.token_timestamps = [] # Track timestamps of new tokens
         self.sol_price = 0.0
