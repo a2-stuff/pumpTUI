@@ -6,6 +6,7 @@ from rich.text import Text
 from rich.markup import escape
 from typing import Callable, Awaitable, List, Dict, Any, Optional
 import asyncio
+from ..config import config
 
 class TokenTable(Widget):
     """A widget to display a list of tokens with search."""
@@ -108,9 +109,10 @@ class TokenTable(Widget):
             stored_item["market_cap"] = new_mc # Normalized
             
             # Coloring logic
-            if new_mc > 40:
+            mc_thresh = config.thresholds["mc"]
+            if new_mc > mc_thresh["yellow"]:
                 mc_style = "green"
-            elif new_mc >= 30:
+            elif new_mc >= mc_thresh["red"]:
                 mc_style = "yellow"
             else:
                 mc_style = "red"
@@ -125,17 +127,19 @@ class TokenTable(Widget):
                 holders_col = self.column_keys.get("Holders")
                 
                 tx_count = stored_item.get("tx_count", 0)
-                if tx_count > 50:
+                tx_thresh = config.thresholds["tx"]
+                if tx_count > tx_thresh["yellow"]:
                     tx_style = "green"
-                elif tx_count >= 16:
+                elif tx_count >= tx_thresh["red"]:
                     tx_style = "yellow"
                 else:
                     tx_style = "red"
                 
                 traders_count = len(stored_item.get("traders", set()))
-                if traders_count > 50:
+                h_thresh = config.thresholds["holders"]
+                if traders_count > h_thresh["yellow"]:
                     h_style = "green"
-                elif traders_count >= 20:
+                elif traders_count >= h_thresh["red"]:
                     h_style = "yellow"
                 else:
                     h_style = "red"
@@ -259,9 +263,10 @@ class TokenTable(Widget):
             symbol = f"${raw_symbol}" if raw_symbol != "N/A" else "N/A"
             market_cap = f"{item.get('market_cap', 0):.2f}"
             mc_val = item.get('marketCapSol', 0)
-            if mc_val > 40:
+            mc_thresh = config.thresholds["mc"]
+            if mc_val > mc_thresh["yellow"]:
                 mc_style = "green"
-            elif mc_val >= 30:
+            elif mc_val >= mc_thresh["red"]:
                 mc_style = "yellow"
             else:
                 mc_style = "red"
@@ -288,18 +293,20 @@ class TokenTable(Widget):
                 display_mint = f"{mint[:4]}...{mint[-4:]}"
                 
             tx_val = item.get("tx_count", 1)
-            if tx_val > 50:
+            tx_thresh = config.thresholds["tx"]
+            if tx_val > tx_thresh["yellow"]:
                 tx_style = "green"
-            elif tx_val >= 16:
+            elif tx_val >= tx_thresh["red"]:
                 tx_style = "yellow"
             else:
                 tx_style = "red"
             tx_count = f"[{tx_style}]{tx_val}[/]"
             
             h_val = len(item.get("traders", set()))
-            if h_val > 50:
+            h_thresh = config.thresholds["holders"]
+            if h_val > h_thresh["yellow"]:
                 h_style = "green"
-            elif h_val >= 20:
+            elif h_val >= h_thresh["red"]:
                 h_style = "yellow"
             else:
                 h_style = "red"
