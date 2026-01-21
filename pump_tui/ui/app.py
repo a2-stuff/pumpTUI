@@ -5,15 +5,17 @@ import csv
 import os
 from datetime import datetime
 from textual.app import App, ComposeResult
-from textual.widgets import Header, Footer, TabbedContent, TabPane, Placeholder, DataTable, Label
+from textual.widgets import Header, Footer, TabbedContent, TabPane, Placeholder, DataTable, Label, Static
 from textual.containers import Container
 from textual.binding import Binding
 from textual.reactive import reactive
 from ..api import PumpPortalClient
 from ..helpers import get_env_var
 from .widgets import TokenTable, TokenDetail
-from .screens import SettingsView, InfoView, WalletTrackerView, QuitScreen, StartupScreen, ShutdownScreen
+from .screens import SettingsView, InfoView, WalletTrackerView, QuitScreen, StartupScreen, ShutdownScreen, TradeModal
 from .wallet_screen import WalletView
+from ..dex_api import DexScreenerClient
+from rich.text import Text
 
 class SystemHeader(Container):
     """Custom header with system stats."""
@@ -94,7 +96,7 @@ class SystemHeader(Container):
 class PumpApp(App):
     """A Textual app to view Pump.fun tokens."""
 
-    TITLE = "pumpTUI v1.0.1"
+    TITLE = "pumpTUI v1.1.4"
     CSS_PATH = "styles.tcss"
     BINDINGS = [
         Binding("q", "quit", "Quit"),
@@ -106,7 +108,20 @@ class PumpApp(App):
         Binding("s", "focus_search", "Search"),
         Binding("i", "switch_to_info", "Info"),
         Binding("r", "refresh", "Refresh Data"),
+        Binding("b", "trade_token", "Trade"),
     ]
+    
+    def safe_focus(self, selector: str, sub_selector: str = None) -> None:
+        """Safely focus a widget after refresh."""
+        def _focus():
+            try:
+                widget = self.query_one(selector)
+                if sub_selector:
+                    widget = widget.query_one(sub_selector)
+                widget.focus()
+            except Exception:
+                pass
+        self.call_after_refresh(_focus)
 
     def __init__(self):
         super().__init__()
@@ -115,7 +130,10 @@ class PumpApp(App):
         if not self.api_key:
              self.api_key = "8hw2peb2a92q0ya475gkgnbdb4nmev9r9134gjkra9m4pc3m6ttqebup9dw6rwvh98tq8ub389jpcckg91pn2t3he8r34wb298r6yvb465vn4c9nat75euhgf1n62nbd84rn0mu7a4ykuathppthqa8rpcnbt6d87jbuh7471672yj65d2p4h3natpqjpb3ax2mwrba8hkkuf8"
         self.api_client = PumpPortalClient(api_key=self.api_key)
+        self.dex_client = DexScreenerClient()
         self.token_timestamps = [] # Track timestamps of new tokens
+        self.sol_price = 0.0
+        self.btc_price = 0.0
 
     async def on_mount(self) -> None:
         """Called when app is mounted."""
@@ -132,6 +150,43 @@ class PumpApp(App):
     async def run_startup_animation(self, startup_screen: StartupScreen):
         await startup_screen.start_loading()
         self.pop_screen()
+        # Start Price Ticker
+        self.set_interval(10.0, self.update_market_prices)
+        asyncio.create_task(self.update_market_prices())
+
+    async def update_market_prices(self) -> None:
+        """Fetch and update SOL/BTC prices."""
+        try:
+            # log to a dedicated price log for clarity
+            with open("price_debug.log", "a") as f:
+                 f.write(f"--- Update cycle start {datetime.now()} ---\n")
+            
+            # Use a short timeout locally to avoid blocking
+            sol = await self.dex_client.get_sol_price()
+            with open("price_debug.log", "a") as f:
+                 f.write(f"SOL fetch done: {sol}\n")
+                 
+            btc = await self.dex_client.get_btc_price()
+            with open("price_debug.log", "a") as f:
+                 f.write(f"BTC fetch done: {btc}\n")
+            
+            if sol: self.sol_price = sol
+            if btc: self.btc_price = btc
+            
+            # Update Price Ticker
+            price_str = f" [blue]◎[/] ${self.sol_price:.2f}   [#fab387]₿[/] ${self.btc_price:,.0f} "
+            self.query_one("#price_ticker", Static).update(Text.from_markup(price_str))
+            
+            # Also log to debug_stream for consistency
+            with open("debug_stream.log", "a") as f:
+                 f.write(f"Prices Updated: SOL {self.sol_price} | BTC {self.btc_price}\n")
+            
+            with open("price_debug.log", "a") as f:
+                 f.write(f"UI Update done: {price_str}\n")
+                 
+        except Exception as e:
+            with open("price_debug.log", "a") as f:
+                f.write(f"Price Update Error: {type(e).__name__}: {e}\n")
 
     async def action_quit(self) -> None:
         """Show quit confirmation."""
@@ -185,26 +240,32 @@ class PumpApp(App):
     async def action_switch_to_settings(self) -> None:
         """Switch to settings tab."""
         self.query_one(TabbedContent).active = "settings"
+        self.safe_focus(SettingsView)
 
     async def action_switch_to_new(self) -> None:
         """Switch to New Tokens tab."""
         self.query_one(TabbedContent).active = "new"
+        self.safe_focus("#table_new")
 
     async def action_switch_to_tracker(self) -> None:
         """Switch to Tracker tab."""
         self.query_one(TabbedContent).active = "tracker"
+        self.safe_focus(WalletTrackerView)
 
     async def action_switch_to_wallets(self) -> None:
         """Switch to Wallets tab."""
         self.query_one(TabbedContent).active = "wallet"
+        self.safe_focus(WalletView, DataTable)
 
     async def action_switch_to_info(self) -> None:
         """Switch to Info tab."""
         self.query_one(TabbedContent).active = "info"
+        self.safe_focus(InfoView)
 
     async def action_switch_to_volume(self) -> None:
         """Switch to Volume/Trending tab."""
         self.query_one(TabbedContent).active = "trending"
+        self.safe_focus("#table_trending")
 
     async def action_focus_search(self) -> None:
         """Switch to New Tokens tab and focus search."""
@@ -213,6 +274,30 @@ class PumpApp(App):
             self.query_one("#search_input").focus()
         except Exception:
             self.notify("Search input not found.", severity="error")
+    
+    async def action_trade_token(self) -> None:
+        """Open trade modal for the currently selected token."""
+        # Get the active tab's TokenTable
+        try:
+            active_tab = self.query_one(TabbedContent).active
+            if active_tab in ["new", "trending"]:
+                table_id = "#table_new" if active_tab == "new" else "#table_trending"
+                token_table = self.query_one(table_id, TokenTable)
+                
+                # Get selected token data
+                selected_token = token_table.get_selected_token()
+                if selected_token:
+                    # Create data provider lambda for live updates
+                    data_provider = lambda m: token_table.data_store.get(m)
+                    
+                    # Open trade modal
+                    await self.push_screen(TradeModal(selected_token, data_provider=data_provider))
+                else:
+                    self.notify("No token selected. Select a token first.", severity="warning")
+            else:
+                self.notify("Trading is only available from New Tokens or Volume tabs.", severity="warning")
+        except Exception as e:
+            self.notify(f"Error opening trade modal: {e}", severity="error")
 
     async def stream_tokens(self) -> None:
         """Listen to WS and update table."""
@@ -301,7 +386,11 @@ class PumpApp(App):
                 yield SettingsView()
             with TabPane("Info", id="info"):
                 yield InfoView()
-        yield Footer()
+        
+        # Custom Bottom Bar
+        with Container(id="bottom_bar"):
+            yield Footer()
+            yield Static(" Loading Prices... ", id="price_ticker", markup=True)
 
     async def action_refresh(self) -> None:
         """Refresh the current view."""

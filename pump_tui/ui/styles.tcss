@@ -15,11 +15,30 @@ Header {
 }
 
 /* Footer */
-Footer {
+/* Footer & Bottom Bar */
+#bottom_bar {
     dock: bottom;
     height: 1;
     background: #1e1e2e;
+    layout: horizontal;
+}
+
+Footer {
+    width: 1fr;
+    height: 1;
+    background: #1e1e2e;
     color: #a6adc8;
+}
+
+#price_ticker {
+    dock: right;
+    width: auto;
+    height: 1;
+    content-align: right middle;
+    padding: 0 1;
+    color: #cdd6f4;
+    text-style: bold;
+    background: #1e1e2e;
 }
 
 /* Tabs */
@@ -39,7 +58,7 @@ TabPane {
 }
 
 Tabs {
-    background: #1e1e2e;
+    background: #11111b;
     dock: top;
     color: #a6adc8;
 }
@@ -69,13 +88,13 @@ Tab.-active {
 }
 
 #table_new {
-    width: 55%;
+    width: 66%;
     height: 1fr;
     border-right: tall #1e1e2e;
 }
 
 #detail_view {
-    width: 45%;
+    width: 34%;
     height: 1fr;
     padding: 1;
     background: #1e1e2e;
@@ -92,16 +111,16 @@ Tab.-active {
     width: 1fr;
     height: 1fr;
     overflow-y: scroll;
-    padding-right: 24;
+    padding-right: 8;
 }
 
 .image-container {
-    width: 22;
-    height: 11;
+    width: 21;
+    height: 10;
     /* border: tall #89b4fa; Removed divider */
     background: #11111b;
     dock: right;
-    margin: 0 4 1 1;
+    margin: 0 1 1 1;
 }
 
 /* Data Tables */

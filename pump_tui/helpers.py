@@ -65,6 +65,18 @@ def save_wallet(wallet: Dict[str, str]) -> None:
     with open(WALLETS_FILE, "w") as f:
         json.dump(wallets, f, indent=2)
 
+def set_active_wallet(pub_key: str) -> None:
+    """Set one wallet as active, others as inactive."""
+    wallets = load_wallets()
+    for w in wallets:
+        if w.get("walletPublicKey") == pub_key:
+            w["active"] = True
+        else:
+            w["active"] = False
+            
+    with open(WALLETS_FILE, "w") as f:
+        json.dump(wallets, f, indent=2)
+
 def delete_wallet(pub_key: str) -> None:
     """Remove wallet by public key."""
     wallets = load_wallets()

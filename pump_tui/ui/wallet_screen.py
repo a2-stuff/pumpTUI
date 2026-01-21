@@ -2,7 +2,7 @@ from textual.app import ComposeResult
 from textual.containers import Vertical, Horizontal
 from textual.widgets import Static, Button, Input, Label, DataTable
 from textual.screen import Screen, ModalScreen
-from ..helpers import save_env_var, get_env_var, load_wallets, save_wallet, delete_wallet
+from ..helpers import save_env_var, get_env_var, load_wallets, save_wallet, delete_wallet, set_active_wallet
 from ..api import PumpPortalClient
 import asyncio
 
@@ -35,7 +35,7 @@ class WalletView(Static):
 
     def on_mount(self) -> None:
         self.wallets_table.cursor_type = "row"
-        self.wallets_table.add_columns("Address", "Balance (SOL)", "API Key")
+        self.wallets_table.add_columns("Active", "Address", "Balance (SOL)", "API Key")
         self.load_wallets_into_table()
 
     def load_wallets_into_table(self) -> None:
@@ -50,7 +50,10 @@ class WalletView(Static):
             masked_key = f"{api_key[:4]}...{api_key[-4:]}" if len(api_key) > 10 else api_key
             balance = w.get("balance", "Check...")
             
-            self.wallets_table.add_row(pub, str(balance), masked_key, key=pub)
+            is_active = w.get("active", False)
+            active_str = "[green][x][/]" if is_active else "[ ]"
+            
+            self.wallets_table.add_row(active_str, pub, str(balance), masked_key, key=pub)
             
         # Trigger balance check for all
         self.check_all_balances()
@@ -64,6 +67,18 @@ class WalletView(Static):
             self.check_all_balances()
         elif event.button.id == "btn_delete":
             self.delete_selected()
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Handle row selection to set active wallet."""
+        try:
+            row_key = event.row_key
+            if row_key:
+                pub_key = row_key.value
+                set_active_wallet(str(pub_key))
+                self.load_wallets_into_table()
+                self.query_one("#status_msg", Static).update(f"Active wallet set: {pub_key}")
+        except Exception:
+            pass
 
     def generate_wallet(self) -> None:
         asyncio.create_task(self._generate_task())

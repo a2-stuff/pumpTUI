@@ -39,18 +39,24 @@ class TokenTable(Widget):
 
     def on_mount(self) -> None:
         self.table.cursor_type = "row"
-        cols = self.table.add_columns("Token CA", "Name", "Ticker", "MC (SOL)", "Tx", "Holders", "Age", "Dev")
+        cols = self.table.add_columns("Token CA", "Name", "Ticker", "MC ($)", "Tx", "Hold", "Age", "Buys", "Sells", "Vol ($)", "Dev")
         # Store MC column key specifically
         if len(cols) >= 4:
-            self.column_keys["MC (SOL)"] = cols[3]
+            self.column_keys["MC ($)"] = cols[3]
         if len(cols) >= 5:
             self.column_keys["Tx"] = cols[4]
         if len(cols) >= 6:
-            self.column_keys["Holders"] = cols[5]
+            self.column_keys["Hold"] = cols[5]
         if len(cols) >= 7:
             self.column_keys["Age"] = cols[6]
         if len(cols) >= 8:
-            self.column_keys["Dev"] = cols[7]
+            self.column_keys["Buys"] = cols[7]
+        if len(cols) >= 9:
+            self.column_keys["Sells"] = cols[8]
+        if len(cols) >= 10:
+            self.column_keys["Vol ($)"] = cols[9]
+        if len(cols) >= 11:
+            self.column_keys["Dev"] = cols[10]
         
         # Start Age Timer
         self.set_interval(1.0, self._update_ages)
@@ -90,17 +96,23 @@ class TokenTable(Widget):
 
     def process_event(self, event: Dict[str, Any]) -> None:
         """Handle incoming event (New Token or Trade)."""
-        # Distinguish between New Token and Trade
-        # New Token has 'name', 'symbol', 'uri'.
-        # Trade has 'txType', 'solAmount', 'marketCapSol', 'mint'.
+        mint = event.get("mint")
+        if not mint:
+            return
+
+        tx_type = event.get("txType")
         
-        if "txType" in event and event["txType"] != "create":
-            self.update_token_trade(event)
+        # If we already know this token, update its stats
+        if mint in self.data_store:
+             self.update_token_trade(event)
+        # For new tokens, add if it's a creation OR if it's an active trade/matured token
+        elif tx_type in [None, "create", "buy", "sell"] or event.get("pool") == "bonk":
+             self.add_new_token(event)
+             # Important: Also process the trade data in this first event
+             self.update_token_trade(event)
         else:
-            # Assume new token if not a trade (and has mint)
-            # OR if txType == "create"
-            if "mint" in event:
-                self.add_new_token(event)
+             # Unknown type for unknown token - skip
+             pass
 
     def _update_ages(self) -> None:
         """Update the Age column for visible rows."""
@@ -140,6 +152,23 @@ class TokenTable(Widget):
                 self.table.update_cell(mint, age_col, age_str)
             except Exception:
                 pass
+    
+    def get_selected_token(self) -> Optional[Dict[str, Any]]:
+        """Get the currently selected/highlighted token's data."""
+        try:
+            if not self.table.is_mounted or self.table.cursor_row < 0:
+                return None
+            
+            # Use DataTable's internal key tracking to ensure we get the visual row's actual token
+            # bypassing any index sync issues with filtered_history
+            row_key = self.table.coordinate_to_cell_key(self.table.cursor_coordinate).row_key
+            mint = row_key.value
+            
+            if mint and mint in self.data_store:
+                return self.data_store[mint]
+            return None
+        except Exception:
+            return None
 
     def update_token_trade(self, trade: Dict[str, Any]) -> None:
         """Update existing token data from a trade event."""
@@ -167,12 +196,20 @@ class TokenTable(Widget):
             
             # Update Table if visible (mint is the row key)
             try:
-                col_key = self.column_keys.get("MC (SOL)", "MC (SOL)")
-                self.table.update_cell(mint, col_key, Text.from_markup(f"[{mc_style}]{new_mc:.2f}[/]"))
+                col_key = self.column_keys.get("MC ($)")
+                if col_key:
+                    sol_price = getattr(self.app, "sol_price", 0.0)
+                    if sol_price > 0:
+                        mc_val_usd = new_mc * sol_price
+                        mc_str = f"[{mc_style}]${mc_val_usd:,.0f}[/]"
+                    else:
+                        mc_str = f"[{mc_style}]{new_mc:.2f} S[/]"
+                        
+                    self.table.update_cell(mint, col_key, Text.from_markup(mc_str))
                 
                 # Update Tx and Holders
                 tx_col = self.column_keys.get("Tx")
-                holders_col = self.column_keys.get("Holders")
+                holders_col = self.column_keys.get("Hold")
                 
                 tx_count = stored_item.get("tx_count", 0)
                 tx_thresh = config.thresholds["tx"]
@@ -210,9 +247,69 @@ class TokenTable(Widget):
         # Increment Tx Count
         stored_item["tx_count"] = stored_item.get("tx_count", 0) + 1
         
+        # Track Buys/Sells
+        tx_type = trade.get("txType")
+        
+        # Infer txType if missing
+        if not tx_type:
+            sol_amt_raw = float(trade.get("solAmount") or 0)
+            if sol_amt_raw > 0:
+                tx_type = "buy"
+            elif float(trade.get("tokenAmount") or 0) > 0:
+                tx_type = "sell"
+
+        if tx_type == "buy":
+             stored_item["buys_count"] = stored_item.get("buys_count", 0) + 1
+        elif tx_type == "sell":
+             stored_item["sells_count"] = stored_item.get("sells_count", 0) + 1
+
         # Update Volume
-        sol_amt = trade.get("solAmount", 0)
-        stored_item["volume_sol"] = stored_item.get("volume_sol", 0.0) + float(sol_amt)
+        sol_amt = float(trade.get("solAmount") or 0)
+        
+        # Estimation for bonk pool if solAmount is missing
+        if sol_amt == 0 and trade.get("pool") == "bonk" and "marketCapSol" in trade and "tokenAmount" in trade:
+             try:
+                 token_amt = float(trade.get("tokenAmount") or 0)
+                 mc_sol = float(trade.get("marketCapSol") or 0)
+                 # Estimation: Price = MC / TotalSupply (1B)
+                 price_sol = mc_sol / 1_000_000_000
+                 sol_amt = token_amt * price_sol
+             except:
+                 pass
+
+        new_vol = stored_item.get("volume_sol", 0.0) + sol_amt
+        stored_item["volume_sol"] = new_vol
+        
+        # Update Volume Cell
+        try:
+            vol_col = self.column_keys.get("Vol ($)")
+            if vol_col:
+                sol_price = getattr(self.app, "sol_price", 0.0)
+                if sol_price > 0:
+                     new_vol_usd = new_vol * sol_price
+                     v_thresh = config.thresholds["vol"]
+                     if new_vol_usd > v_thresh["yellow"]:
+                         v_style = "green"
+                     elif new_vol_usd >= v_thresh["red"]:
+                         v_style = "yellow"
+                     else:
+                         v_style = "red"
+                     self.table.update_cell(mint, vol_col, Text.from_markup(f"[{v_style}]${new_vol_usd:,.0f}[/]"))
+                else:
+                     self.table.update_cell(mint, vol_col, f"{new_vol:.2f} S")
+        except:
+            pass
+        
+        # Update Buys/Sells Cell (separate try/except for independence)
+        try:
+            buy_col = self.column_keys.get("Buys")
+            sell_col = self.column_keys.get("Sells")
+            if buy_col:
+                 self.table.update_cell(mint, buy_col, Text.from_markup(f"[green]{stored_item.get('buys_count', 0)}[/]"))
+            if sell_col:
+                 self.table.update_cell(mint, sell_col, Text.from_markup(f"[red]{stored_item.get('sells_count', 0)}[/]"))
+        except:
+            pass
         
         # Check Dev Sold
         creator = stored_item.get("creator")
@@ -249,6 +346,8 @@ class TokenTable(Widget):
              item["timestamp"] = time.time()
         
         item["tx_count"] = 0
+        item["buys_count"] = 0
+        item["sells_count"] = 0
         item["volume_sol"] = 0.0
         item["dev_sold"] = False
         item["creator"] = item.get("traderPublicKey", None)
@@ -263,6 +362,10 @@ class TokenTable(Widget):
         self.history.insert(0, item)
         if len(self.history) > self.max_history:
             removed = self.history.pop()
+            # Also remove from data_store to prevent memory leak and allow re-discovery
+            removed_mint = removed.get("mint")
+            if removed_mint and removed_mint in self.data_store:
+                del self.data_store[removed_mint]
         
         # If matches current filter (or no filter), add to filtered list
         match = True
@@ -354,7 +457,13 @@ class TokenTable(Widget):
                 mc_style = "yellow"
             else:
                 mc_style = "red"
-            market_cap = f"[{mc_style}]{mc_val:.2f}[/]"
+            
+            sol_price = getattr(self.app, "sol_price", 0.0)
+            if sol_price > 0:
+                mc_val_usd = mc_val * sol_price
+                market_cap = f"[{mc_style}]${mc_val_usd:,.0f}[/]"
+            else:
+                market_cap = f"[{mc_style}]{mc_val:.2f} S[/]"
             
             # Ensure we have a timestamp for age calc
             ts = item.get("timestamp")
@@ -398,6 +507,12 @@ class TokenTable(Widget):
                 h_style = "red"
             holders = f"[{h_style}]{h_val}[/]"
             
+            # Buys/Sells
+            buys_val = item.get("buys_count", 0)
+            sells_val = item.get("sells_count", 0)
+            buys_str = f"[green]{buys_val}[/]"
+            sells_str = f"[red]{sells_val}[/]"
+
             # Initial Age Calculation
             age_str = "0s"
             if ts and isinstance(ts, (int, float)):
@@ -414,6 +529,22 @@ class TokenTable(Widget):
                      m = (diff % 3600) // 60
                      age_str = f"{h}h {m}m"
             
+            # Volume
+            vol_val = item.get("volume_sol", 0.0)
+            sol_price = getattr(self.app, "sol_price", 0.0)
+            if sol_price > 0:
+                 vol_val_usd = vol_val * sol_price
+                 v_thresh = config.thresholds["vol"]
+                 if vol_val_usd > v_thresh["yellow"]:
+                     v_style = "green"
+                 elif vol_val_usd >= v_thresh["red"]:
+                     v_style = "yellow"
+                 else:
+                     v_style = "red"
+                 vol_str = f"[{v_style}]${vol_val_usd:,.0f}[/]"
+            else:
+                 vol_str = f"{vol_val:.2f} S"
+
             # Dev Sold
             dev_sold = item.get("dev_sold", False)
             if dev_sold:
@@ -421,7 +552,7 @@ class TokenTable(Widget):
             else:
                 dev_str = "[red]HOLDING[/]"
 
-            self.table.add_row(display_mint, name, symbol, Text.from_markup(market_cap), Text.from_markup(tx_count), Text.from_markup(holders), age_str, Text.from_markup(dev_str), key=mint)
+            self.table.add_row(display_mint, name, symbol, Text.from_markup(market_cap), Text.from_markup(tx_count), Text.from_markup(holders), age_str, Text.from_markup(buys_str), Text.from_markup(sells_str), Text.from_markup(vol_str), Text.from_markup(dev_str), key=mint)
         
         # Update controls
         self.query_one("#page_label", Label).update(f"Page {self.current_page} (Total: {len(source_list)})")
