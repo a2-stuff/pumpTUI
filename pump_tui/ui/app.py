@@ -316,40 +316,50 @@ class PumpApp(App):
                 selected_token = token_table.get_selected_token()
                 
                 if selected_token:
-                    ca = selected_token.get("mint")
+                    ca = selected_token.get("mint", "").strip()
                     if ca:
-                        # Attempt to copy to clipboard via subprocess for robustness
-                        import subprocess
                         success = False
                         
-                        # Try xclip (Linux/X11)
+                        # Method 1: OSC 52 Escape Sequence (Modern terminals / SSH / tmux)
                         try:
-                            process = subprocess.Popen(['xclip', '-selection', 'clipboard'], stdin=subprocess.PIPE)
-                            process.communicate(input=ca.encode('utf-8'))
-                            if process.returncode == 0: success = True
+                            import base64
+                            import sys
+                            encoded_ca = base64.b64encode(ca.encode('utf-8')).decode('utf-8')
+                            # Write directly to the terminal's output stream
+                            sys.stdout.write(f"\033]52;c;{encoded_ca}\a")
+                            sys.stdout.flush()
+                            # We treat OSC 52 as a "maybe" success, they rarely report failure
+                            # but we'll still try other local methods to be sure
+                            success = True 
                         except: pass
+
+                        # Method 2: System Clipboard Managers
+                        import subprocess
+                        import os
                         
-                        # Try wl-copy (Linux/Wayland)
-                        if not success:
+                        # Priority list: Wayland -> X11 -> macOS
+                        cmds = []
+                        if os.getenv("WAYLAND_DISPLAY"):
+                            cmds.append(['wl-copy'])
+                        if os.getenv("DISPLAY"):
+                            cmds.append(['xclip', '-selection', 'clipboard'])
+                            cmds.append(['xsel', '-ib'])
+                        cmds.append(['pbcopy']) # macOS
+                        
+                        for cmd in cmds:
                             try:
-                                process = subprocess.Popen(['wl-copy'], stdin=subprocess.PIPE)
-                                process.communicate(input=ca.encode('utf-8'))
-                                if process.returncode == 0: success = True
-                            except: pass
-                            
-                        # Try pbcopy (macOS)
-                        if not success:
-                            try:
-                                process = subprocess.Popen(['pbcopy'], stdin=subprocess.PIPE)
-                                process.communicate(input=ca.encode('utf-8'))
-                                if process.returncode == 0: success = True
-                            except: pass
+                                # Use run to wait for completion
+                                subprocess.run(cmd, input=ca.encode('utf-8'), check=True, capture_output=True)
+                                success = True
+                                break
+                            except:
+                                continue
 
                         if success:
-                            self.notify(f"Copied CA: {ca[:8]}...", variant="success")
+                            self.notify(f"Copied CA: {ca[:8]}...{ca[-4:]}", variant="success")
                         else:
-                            # Fallback: Notify user of the full CA if copy failed
-                            self.notify(f"Clipboard failed. CA: {ca}", timeout=10)
+                            # Total failure: Notify with the actual address so user can see it
+                            self.notify(f"Clipboard Error. CA: {ca}", timeout=15)
                     else:
                         self.notify("No Mint address found for this token.", variant="error")
                 else:
