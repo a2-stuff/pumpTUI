@@ -36,10 +36,14 @@ class TokenTable(Widget):
 
     def on_mount(self) -> None:
         self.table.cursor_type = "row"
-        cols = self.table.add_columns("Token CA", "Name", "Ticker", "MC (SOL)", "Created")
+        cols = self.table.add_columns("Token CA", "Name", "Ticker", "MC (SOL)", "Tx", "Holders", "Created")
         # Store MC column key specifically
         if len(cols) >= 4:
             self.column_keys["MC (SOL)"] = cols[3]
+        if len(cols) >= 5:
+            self.column_keys["Tx"] = cols[4]
+        if len(cols) >= 6:
+            self.column_keys["Holders"] = cols[5]
         
         if self.fetch_method:
             self.load_data()
@@ -103,15 +107,37 @@ class TokenTable(Widget):
             stored_item["marketCapSol"] = new_mc
             stored_item["market_cap"] = new_mc # Normalized
             
+            # Coloring logic
+            if new_mc > 40:
+                mc_style = "green"
+            elif new_mc >= 30:
+                mc_style = "yellow"
+            else:
+                mc_style = "red"
+            
             # Update Table if visible (mint is the row key)
             try:
                 col_key = self.column_keys.get("MC (SOL)", "MC (SOL)")
-                self.table.update_cell(mint, col_key, f"{new_mc:.2f}")
+                self.table.update_cell(mint, col_key, Text.from_markup(f"[{mc_style}]{new_mc:.2f}[/]"))
+                
+                # Update Tx and Holders
+                tx_col = self.column_keys.get("Tx")
+                holders_col = self.column_keys.get("Holders")
+                if tx_col:
+                     self.table.update_cell(mint, tx_col, str(stored_item.get("tx_count", 0)))
+                if holders_col:
+                     self.table.update_cell(mint, holders_col, str(len(stored_item.get("traders", set()))))
             except Exception:
                 # Silently fail if row not in table (paginated out)
                 pass
 
         # --- Aggregation Logic ---
+        # Track Traders
+        if "traderPublicKey" in trade:
+            if "traders" not in stored_item:
+                 stored_item["traders"] = set()
+            stored_item["traders"].add(trade["traderPublicKey"])
+
         # Increment Tx Count
         stored_item["tx_count"] = stored_item.get("tx_count", 0) + 1
         
@@ -146,6 +172,9 @@ class TokenTable(Widget):
         item["volume_sol"] = 0.0
         item["dev_sold"] = False
         item["creator"] = item.get("traderPublicKey", None)
+        item["traders"] = set()
+        if item["creator"]:
+            item["traders"].add(item["creator"])
         
         self.data_store[mint] = item
 
@@ -212,8 +241,14 @@ class TokenTable(Widget):
             raw_symbol = item.get("symbol", "N/A")
             symbol = f"${raw_symbol}" if raw_symbol != "N/A" else "N/A"
             market_cap = f"{item.get('market_cap', 0):.2f}"
-            if "marketCapSol" in item:
-                 market_cap = f"{item.get('marketCapSol', 0):.2f}"
+            mc_val = item.get('marketCapSol', 0)
+            if mc_val > 40:
+                mc_style = "green"
+            elif mc_val >= 30:
+                mc_style = "yellow"
+            else:
+                mc_style = "red"
+            market_cap = f"[{mc_style}]{mc_val:.2f}[/]"
             
             created = str(item.get("created_timestamp", "N/A"))
             if "timestamp" in item:
@@ -235,7 +270,10 @@ class TokenTable(Widget):
             if len(mint) > 10:
                 display_mint = f"{mint[:4]}...{mint[-4:]}"
                 
-            self.table.add_row(display_mint, name, symbol, market_cap, created, key=mint)
+            tx_count = str(item.get("tx_count", 1))
+            holders = str(len(item.get("traders", set())))
+            
+            self.table.add_row(display_mint, name, symbol, Text.from_markup(market_cap), tx_count, holders, created, key=mint)
         
         # Update controls
         self.query_one("#page_label", Label).update(f"Page {self.current_page} (Total: {len(source_list)})")
@@ -304,7 +342,17 @@ class TokenDetail(Static):
             if key in token_data:
                 val = token_data[key]
                 content.append(f"{key}: ", style="bold")
-                content.append(f"{val}\n")
+                
+                if key == "marketCapSol" and isinstance(val, (int, float)):
+                    if val > 40:
+                        mc_style = "green"
+                    elif val >= 30:
+                        mc_style = "yellow"
+                    else:
+                        mc_style = "red"
+                    content.append(f"{val}\n", style=mc_style)
+                else:
+                    content.append(f"{val}\n")
         
         content.append("\n") # Spacer
         
