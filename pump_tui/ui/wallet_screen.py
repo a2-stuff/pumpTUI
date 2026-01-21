@@ -48,7 +48,7 @@ class WalletView(Static):
             balance = w.get("balance", "Check...")
             
             is_active = w.get("active", False)
-            active_str = "[green][x][/]" if is_active else "[ ]"
+            active_str = "[green][X][/]" if is_active else "[ ]"
             
             self.wallets_table.add_row(active_str, pub, str(balance), key=pub)
             

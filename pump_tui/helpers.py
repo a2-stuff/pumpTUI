@@ -60,7 +60,14 @@ def save_wallet(wallet: Dict[str, str]) -> None:
             break
     
     if not found:
+        # If this is the first wallet, mark it active
+        if len(wallets) == 0:
+            wallet["active"] = True
         wallets.append(wallet)
+    
+    # Final check: if only one wallet and none active, fix it
+    if len(wallets) == 1:
+        wallets[0]["active"] = True
         
     with open(WALLETS_FILE, "w") as f:
         json.dump(wallets, f, indent=2)
@@ -80,7 +87,20 @@ def set_active_wallet(pub_key: str) -> None:
 def delete_wallet(pub_key: str) -> None:
     """Remove wallet by public key."""
     wallets = load_wallets()
+    
+    # Check if we're deleting the active wallet
+    was_active = False
+    for w in wallets:
+        if w.get("walletPublicKey") == pub_key and w.get("active"):
+            was_active = True
+            break
+            
     wallets = [w for w in wallets if w.get("walletPublicKey") != pub_key]
+    
+    # If we deleted the active one, pick a new one
+    if was_active and wallets:
+        wallets[0]["active"] = True
+        
     with open(WALLETS_FILE, "w") as f:
         json.dump(wallets, f, indent=2)
 

@@ -64,6 +64,17 @@ Environment variables are handled via a `.env` file in the root directory. To co
 
 > **Note**: After updating the `.env` file, you must restart the application for changes to take effect.
 
+## Trading Requirements
+
+To use the **Buy** and **Sell** functions, you must set up a wallet within the application:
+
+1.  **Generate a Wallet**: Go to the **Wallets** tab (`w`) and click **Generate New**. This will create a fresh Solana account for you.
+2.  **Fund your Wallet**: Send a small amount of SOL to the generated address. This is required for transaction fees and purchasing tokens.
+3.  **Set as Default**: In the **Wallets** tab, select your wallet to mark it as the **Active** wallet. You will see an `[X]` next to the active wallet. If you only have one wallet, it will be selected automatically.
+4.  **Trade**: Once funded and active, you can press `b` on any token to open the trade modal.
+
+## Usage
+
 To start the application, use the provide management script:
 
 ```bash
