@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:7-alpine
+    container_name: pumptui-mongo
+    volumes:
+      - pumptui-mongodb:/data/db
+    networks:
+      - pumptui-net
+    restart: unless-stopped
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  app:
+    build: .
+    image: pumptui:latest
+    container_name: pumptui-app
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./tokensdb:/app/tokensdb
+      - ./error.log:/app/error.log
+      - ./db_error.log:/app/db_error.log
+      - ./debug_stream.log:/app/debug_stream.log
+      - ./debug_moves.log:/app/debug_moves.log
+      - ./.env:/app/.env:ro
+    networks:
+      - pumptui-net
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017
+      - PYTHONUNBUFFERED=1
+
+volumes:
+  pumptui-mongodb:
+    name: pumptui-mongodb
+
+networks:
+  pumptui-net:
+    name: pumptui-net

@@ -22,6 +22,37 @@ pumpTUI is a Terminal User Interface (TUI) application for viewing and tracking 
 
 ## Installation
 
+### Option 1: Docker (Recommended for Easy Setup)
+
+**Zero localhost dependencies** - Everything runs in containers!
+
+1.  **Clone the repository:**
+    ```bash
+    git clone <repository_url>
+    cd pumpTUI
+    ```
+
+2.  **Configure environment:**
+    ```bash
+    cp .env.example .env
+    # Edit .env with your API key and settings
+    ```
+
+3.  **Start with Docker:**
+    ```bash
+    python3 manage.py start --docker
+    ```
+    
+    That's it! Docker will automatically:
+    - Download and set up MongoDB
+    - Build the application image
+    - Start both containers
+    - Connect you to the TUI
+
+📚 **See [DOCKER.md](DOCKER.md) for the complete Docker deployment guide**
+
+### Option 2: Local Installation
+
 1.  **Clone the repository:**
     ```bash
     git clone <repository_url>
@@ -44,6 +75,7 @@ pumpTUI is a Terminal User Interface (TUI) application for viewing and tracking 
     ```bash
     pip install -r requirements.txt
     ```
+
 
 ## Setup
 Environment variables are handled via a `.env` file in the root directory. To configure or update your settings:
