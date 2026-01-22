@@ -40,12 +40,35 @@ def start_docker():
     
     # Check if Docker is installed
     try:
-        subprocess.run(["docker", "--version"], capture_output=True, check=True)
-        subprocess.run(["docker-compose", "--version"], capture_output=True, check=True)
+        subprocess.run(["docker", "--version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        subprocess.run(["docker-compose", "--version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
     except (subprocess.CalledProcessError, FileNotFoundError):
         print("❌ Error: Docker or docker-compose is not installed.")
         print("Please install Docker Desktop or Docker Engine + docker-compose.")
         sys.exit(1)
+    
+    # Test Docker permissions
+    docker_prefix = []
+    try:
+        subprocess.run(["docker", "ps"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    except subprocess.CalledProcessError:
+        print("❌ Error: Permission denied accessing Docker.")
+        print("\n💡 Solution: Run with sudo")
+        print("   sudo python3 manage.py start --docker")
+        print("\nAttempting to continue with sudo...")
+        docker_prefix = ["sudo"]
+        
+        # Test sudo works
+        try:
+            subprocess.run(["sudo", "-n", "true"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        except subprocess.CalledProcessError:
+            # Need password
+            print("Please enter your password:")
+            try:
+                subprocess.run(["sudo", "true"], check=True)
+            except:
+                print("❌ Authentication failed")
+                sys.exit(1)
     
     # Check if .env file exists
     if not os.path.exists(".env"):
@@ -60,7 +83,7 @@ def start_docker():
     
     # Check if container already exists
     result = subprocess.run(
-        ["docker", "ps", "-a", "--filter", "name=pumptui-app", "--format", "{{.Names}}"],
+        docker_prefix + ["docker", "ps", "-a", "--filter", "name=pumptui-app", "--format", "{{.Names}}"],
         capture_output=True,
         text=True
     )
@@ -70,7 +93,7 @@ def start_docker():
     if container_exists:
         # Check if it's running
         result = subprocess.run(
-            ["docker", "ps", "--filter", "name=pumptui-app", "--format", "{{.Names}}"],
+            docker_prefix + ["docker", "ps", "--filter", "name=pumptui-app", "--format", "{{.Names}}"],
             capture_output=True,
             text=True
         )
@@ -79,19 +102,19 @@ def start_docker():
         if is_running:
             print("✅ Container is already running. Attaching...")
             print("💡 Tip: Press Ctrl+P then Ctrl+Q to detach without stopping.")
-            subprocess.run(["docker", "attach", "pumptui-app"])
+            subprocess.run(docker_prefix + ["docker", "attach", "pumptui-app"])
         else:
             print("🔄 Starting existing container...")
-            subprocess.run(["docker-compose", "start", "app"])
+            subprocess.run(docker_prefix + ["docker-compose", "start", "app"])
             print("✅ Container started. Attaching...")
             print("💡 Tip: Press Ctrl+P then Ctrl+Q to detach without stopping.")
-            subprocess.run(["docker", "attach", "pumptui-app"])
+            subprocess.run(docker_prefix + ["docker", "attach", "pumptui-app"])
     else:
         print("🔨 Building and creating containers for the first time...")
         print("   This may take a few minutes...")
         
         # Build and start with compose
-        result = subprocess.run(["docker-compose", "up", "-d", "--build"])
+        result = subprocess.run(docker_prefix + ["docker-compose", "up", "-d", "--build"])
         
         if result.returncode == 0:
             print("✅ Containers created and started successfully!")
@@ -102,9 +125,11 @@ def start_docker():
             import time
             time.sleep(2)
             
-            subprocess.run(["docker", "attach", "pumptui-app"])
+            subprocess.run(docker_prefix + ["docker", "attach", "pumptui-app"])
         else:
-            print("❌ Failed to start containers. Check logs with: docker-compose logs")
+            print("❌ Failed to start containers.")
+            cmd_prefix = "sudo " if docker_prefix else ""
+            print(f"Check logs with: {cmd_prefix}docker-compose logs")
             sys.exit(1)
 
 def stop(use_docker=False):
@@ -130,7 +155,15 @@ def stop_local():
 def stop_docker():
     """Stop Docker containers."""
     print("Stopping pumpTUI Docker containers...")
-    result = subprocess.run(["docker-compose", "stop"])
+    
+    # Check if we need sudo
+    docker_prefix = []
+    try:
+        subprocess.run(["docker", "ps"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    except subprocess.CalledProcessError:
+        docker_prefix = ["sudo"]
+    
+    result = subprocess.run(docker_prefix + ["docker-compose", "stop"])
     
     if result.returncode == 0:
         print("✅ Containers stopped successfully.")
@@ -150,11 +183,18 @@ def clean_docker():
         print("Cancelled.")
         return
     
+    # Check if we need sudo
+    docker_prefix = []
+    try:
+        subprocess.run(["docker", "ps"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    except subprocess.CalledProcessError:
+        docker_prefix = ["sudo"]
+    
     print("🗑️  Removing containers and volumes...")
-    subprocess.run(["docker-compose", "down", "-v"])
+    subprocess.run(docker_prefix + ["docker-compose", "down", "-v"])
     
     # Also remove the built image
-    subprocess.run(["docker", "rmi", "pumptui:latest"], capture_output=True)
+    subprocess.run(docker_prefix + ["docker", "rmi", "pumptui:latest"], capture_output=True)
     
     print("✅ Cleanup complete. All Docker resources removed.")
 
@@ -183,4 +223,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
