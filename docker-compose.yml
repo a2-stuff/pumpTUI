@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   mongodb:
-    image: mongo:7-alpine
+    image: mongo:latest
     container_name: pumptui-mongo
     volumes:
       - pumptui-mongodb:/data/db
