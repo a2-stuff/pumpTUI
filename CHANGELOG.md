@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.1.7] - 2026-01-22
+
+### Added
+- **Live Candle Graph**: Added a real-time ASCII candlestick chart to the Trade Panel.
+  - Features dynamic auto-scaling and centering based on visible history.
+  - Updates only on price movement (Market Cap change) or active Buy/Sell pressure.
+  - Color-coded candles (Green for UP, Red for DOWN) based on trade trend.
+- **Trade Panel UI Overhaul**:
+  - Restructured layout with boxed containers for cleaner organization.
+  - **Market Stats**: Added "Initial Buy" (In. Buy) and "Dev Status" (SOLD/HOLDING) indicators.
+  - **Contract Info**: Moved Contract Address to a dedicated box, including full social links and description.
+  - **Input Box**: Improved layout with stacked input and estimate fields for better visibility.
+- **Global Keybindings**:
+  - Added global `e` hotkey to execute trades from anywhere in the app.
+  - Restored `Enter` hotkey to select tokens from the list.
+
+### Changed
+- **Visuals**:
+  - Centered Buy/Sell buttons at the top of the panel.
+  - Adjusted button colors (Sell is now Red).
+  - Ticker symbol now includes `$` prefix.
+  - Optimized vertical spacing and box heights for a compact view.
+  - Truncated social links to prevent overflow.
+- **Performance**:
+  - Replaced 1-second polling in Trade Panel with purely event-driven real-time updates.
+
 ## [v1.1.6] - 2026-01-21
 
 ### Added

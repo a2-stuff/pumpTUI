@@ -18,8 +18,10 @@ def start():
         print(f"Using System Python: {python_exec}")
 
     try:
-        # Run the app module
-        subprocess.run([python_exec, "-m", "pump_tui.ui.app"])
+        # Run the app's main entry point
+        env = os.environ.copy()
+        env["PYTHONPATH"] = f".:{env.get('PYTHONPATH', '')}"
+        subprocess.run([python_exec, "-m", "pump_tui.main"], env=env)
     except KeyboardInterrupt:
         print("\nExiting pumpTUI.")
     except Exception as e:
@@ -30,7 +32,7 @@ def stop():
     print("Searching for running pumpTUI processes...")
     try:
         # Use pkill -f to find processes matching the app module path
-        result = subprocess.run(["pkill", "-f", "pump_tui.ui.app"], capture_output=True, text=True)
+        result = subprocess.run(["pkill", "-f", "pump_tui.main"], capture_output=True, text=True)
         if result.returncode == 0:
             print("Successfully stopped pumpTUI.")
         else:

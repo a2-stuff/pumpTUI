@@ -3,6 +3,7 @@ from textual.containers import Vertical, Container, Horizontal, Grid
 from textual.screen import ModalScreen, Screen
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.reactive import reactive
 from typing import Dict, Any, Callable
 from rich.text import Text
 from datetime import datetime
@@ -127,8 +128,7 @@ class InfoView(Container):
 # PumpTUI
 **A Textual TUI for Pump.fun**
 
-Version: 0.1.0
-Version: 0.1.0
+Version: 1.1.7
 Created by: @not_jarod
 
 ## Features
@@ -235,13 +235,22 @@ class StartupScreen(Screen):
         padding-bottom: 2;
         content-align: center middle;
     }
-    #status {
-        color: #a6adc8;
+    #startup-log {
+        width: 60;
+        height: auto;
+        border: solid #313244;
+        padding: 1 2;
+        background: #181825;
+    }
+    #startup-log Label {
+        width: 100%;
+        margin-bottom: 0;
     }
     """
     
-    from textual.reactive import reactive
-    loading_text = reactive("Initializing...")
+    
+    # Reactive list of log lines
+    log_lines = reactive([])
 
     def compose(self) -> ComposeResult:
         yield Label(
@@ -253,27 +262,36 @@ class StartupScreen(Screen):
             r"                       |_|                    ",
             classes="logo"
         )
-        yield Label(self.loading_text, id="status")
+        # Log container
+        yield Vertical(id="startup-log")
 
-    def watch_loading_text(self, text: str) -> None:
+    def watch_log_lines(self, lines: list) -> None:
+        """Update log view when lines change."""
         try:
-            self.query_one("#status", Label).update(text)
+            log_container = self.query_one("#startup-log", Vertical)
+            # Clear and rebuild or just append if we could, but reactive list replace is easier for now
+            log_container.remove_children()
+            
+            for line, color in lines:
+                lbl = Label(line)
+                if color: lbl.styles.color = color
+                log_container.mount(lbl)
+                
+            log_container.scroll_end(animate=False)
         except Exception:
             pass
 
+    def add_log(self, message: str, color: str = None) -> None:
+        """Add a log line."""
+        # Create new list to trigger reactive update
+        new_lines = list(self.log_lines)
+        new_lines.append((message, color))
+        self.log_lines = new_lines
+
     async def start_loading(self):
-        """Cycle through loading steps."""
-        steps = [
-            "Loading UI Components...",
-            "Connecting to APIs...",
-            "Loading Wallet Tracker...",
-            "Preparing Token Stream...",
-            "Ready!"
-        ]
-        import asyncio
-        for step in steps:
-            self.loading_text = step
-            await asyncio.sleep(0.5)
+        """Initial message."""
+        self.add_log("Initializing pumpTUI...", "white")
+        await asyncio.sleep(0.5)
 
 
 class TradeModal(ModalScreen):
@@ -304,10 +322,14 @@ class TradeModal(ModalScreen):
         margin-bottom: 1;
         color: #a6adc8;
     }
+
+    .spacer {
+        height: 1;
+    }
     
     .trade_buttons {
         layout: horizontal;
-        height: 3;
+        height: 1;
         margin-bottom: 1;
     }
     
@@ -316,6 +338,8 @@ class TradeModal(ModalScreen):
         margin: 0 1;
         background: #313244;
         color: #cdd6f4;
+        height: 1;
+        border: none;
     }
     
     #buy_button.-active {
@@ -407,7 +431,7 @@ class TradeModal(ModalScreen):
     """
     
     BINDINGS = [
-        Binding("e", "execute_trade", "Execute"),
+        Binding("e", "execute_trade", "Execute (e)"),
         Binding("c", "cancel_trade", "Cancel"),
         Binding("b", "toggle_buy", "Buy Mode"),
         Binding("s", "toggle_sell", "Sell Mode"),
@@ -441,6 +465,7 @@ class TradeModal(ModalScreen):
             yield Label(f"Trade: {name} (${symbol})", id="trade_title")
             
             yield Label(f"Mint: {display_mint} | MC: {mc_sol:,.2f} SOL {mc_usd_str}", id="token_info")
+            yield Label("", classes="spacer")
             
             # Active Wallet Display
             # Active Wallet Display
@@ -493,7 +518,7 @@ class TradeModal(ModalScreen):
             
             # Action buttons
             with Horizontal(classes="action_buttons"):
-                yield Button("Execute Trade (e)", variant="success", id="execute_button", classes="action_button")
+                yield Button("Execute (e)", variant="success", id="execute_button", classes="action_button")
                 yield Button("Cancel (c)", variant="error", id="cancel_button", classes="action_button")
             
             # Wallet Balance (Moved below buttons)
@@ -801,7 +826,7 @@ class TradeModal(ModalScreen):
         finally:
             self.is_processing = False
             self.query_one("#execute_button", Button).disabled = False
-            self.query_one("#execute_button", Button).label = "Execute Trade (e)"
+            self.query_one("#execute_button", Button).label = "Execute (e)"
     
     def on_input_changed(self, event: Input.Changed) -> None:
         """Update estimation and handle automatic percentage suffixes."""

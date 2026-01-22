@@ -1,6 +1,6 @@
 from textual.widgets import DataTable, Button, Label, Input, Pretty, Static
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, Container
 from textual.app import ComposeResult
 from textual.widget import Widget
 from rich.text import Text
@@ -8,8 +8,15 @@ from rich.markup import escape
 from typing import Callable, Awaitable, List, Dict, Any, Optional
 import asyncio
 import time
+import httpx
 from datetime import datetime
 from ..config import config
+from .image_utils import fetch_token_metadata
+try:
+    from .image_renderer import render_image_to_ansi
+except ImportError:
+    async def render_image_to_ansi(*args, **kwargs): return ""
+from .graph_widget import CandleChart
 
 class TokenTable(Widget):
     """A widget to display a list of tokens with search."""
@@ -39,6 +46,9 @@ class TokenTable(Widget):
         self._last_click_time = 0.0
         self._last_clicked_row = None
         self._pending_updates = False
+        
+        # Selection State
+        self.selected_mint = None
 
     def compose(self) -> ComposeResult:
         yield Input(placeholder="Search by Name, Ticker, or Mint...", id="search_input")
@@ -52,24 +62,24 @@ class TokenTable(Widget):
         self.table.cursor_type = "row"
         self.table_title = "New Tokens (Live)"
         self.table.border_title = self.table_title
-        cols = self.table.add_columns("Token CA", "Name", "Ticker", "MC ($)", "Tx", "Hold", "Buys", "Sells", "Vol ($)", "Dev", "Age")
+        cols = self.table.add_columns(" ", "Token CA", "Name", "Ticker", "MC ($)", "Tx", "Hold", "Buys", "Sells", "Vol ($)", "Dev", "Age")
         # Store MC column key specifically
-        if len(cols) >= 4:
-            self.column_keys["MC ($)"] = cols[3]
         if len(cols) >= 5:
-            self.column_keys["Tx"] = cols[4]
+            self.column_keys["MC ($)"] = cols[4]
         if len(cols) >= 6:
-            self.column_keys["Hold"] = cols[5]
+            self.column_keys["Tx"] = cols[5]
         if len(cols) >= 7:
-            self.column_keys["Buys"] = cols[6]
+            self.column_keys["Hold"] = cols[6]
         if len(cols) >= 8:
-            self.column_keys["Sells"] = cols[7]
+            self.column_keys["Buys"] = cols[7]
         if len(cols) >= 9:
-            self.column_keys["Vol ($)"] = cols[8]
+            self.column_keys["Sells"] = cols[8]
         if len(cols) >= 10:
-            self.column_keys["Dev"] = cols[9]
+            self.column_keys["Vol ($)"] = cols[9]
         if len(cols) >= 11:
-            self.column_keys["Age"] = cols[10]
+            self.column_keys["Dev"] = cols[10]
+        if len(cols) >= 12:
+            self.column_keys["Age"] = cols[11]
         
         # Timers
         self.set_interval(1.0, self._update_ages)
@@ -133,6 +143,20 @@ class TokenTable(Widget):
         else:
              # Unknown type for unknown token - skip
              pass
+    
+    def select_token(self, mint: str) -> bool:
+        """Toggle selection of a token. Returns True if now selected."""
+        if self.selected_mint == mint:
+             # Deselect? Or just keep selected? Let's keep selected as it's a radio behavior effectively for trading
+             # But user said "checkbox", usually implied multi-select or toggle.
+             # "selected token is what's going to be used". Singular.
+             # If same, maybe do nothing.
+             return True
+        
+        self.selected_mint = mint
+        # Re-render to update checkboxes
+        self.render_page()
+        return True
 
     def _update_ages(self) -> None:
         """Update the Age column for visible rows."""
@@ -421,6 +445,13 @@ class TokenTable(Widget):
         if item["creator"]:
             item["traders"].add(item["creator"])
         
+        # Capture Initial Buy (from creation event)
+        # Pump.fun 'create' event usually has 'solAmount' which is the initial buy.
+        if item.get("txType") == "create":
+             item["initial_buy"] = float(item.get("solAmount") or 0.0)
+        else:
+             item["initial_buy"] = 0.0
+
         self.data_store[mint] = item
 
         
@@ -507,7 +538,7 @@ class TokenTable(Widget):
                 pass
             
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        """Handle double-click to open trade modal."""
+        """Handle double-click to open trade modal. Enter (keyboard selection) is disabled."""
         now = time.time()
         row_key = event.row_key.value
         
@@ -518,6 +549,11 @@ class TokenTable(Widget):
         else:
             self._last_click_time = now
             self._last_clicked_row = row_key
+            
+            # Since Enter key triggers this, we used to select the token here.
+            # To remove the Enter keybind, we do NOT call selection logic here anymore.
+            # Selection must be done via specific click or other method if desired.
+            pass
 
     def render_page(self):
         """Render the current page from filtered history with cursor stability."""
@@ -627,7 +663,11 @@ class TokenTable(Widget):
             
         dev_str = "[green]SOLD[/]" if item.get("dev_sold", False) else "[red]HOLDING[/]"
         
+        # Checkbox
+        sel_str = "[green]x[/]" if item.get("mint") == self.selected_mint else "[ ]"
+
         return [
+            sel_str,
             display_mint, 
             name, 
             symbol, 
@@ -1125,3 +1165,504 @@ class RunnersTable(TokenTable):
     
     def key_v(self): # Sort by Volume
         asyncio.create_task(self.toggle_sort("volume"))
+
+
+# ----------------------------------------------------------------------
+# Trade Panel (Persistent Side Panel)
+# ----------------------------------------------------------------------
+
+
+
+class TradeInput(Input):
+    """Input that triggers trade execution on 'e' key."""
+    
+    def _on_key(self, event) -> None:
+        if event.key == "e":
+            # Find parent panel and execute (dynamic lookup to avoid scope issues)
+            # Traverse up to find the container with the action
+            node = self.parent
+            while node:
+                if node.id == "trade_panel_container" or isinstance(node, Container):
+                    # Check if this node has the action we need (It's likely the TradePanel wrapper or the Panel itself)
+                    # TradePanel is the widget class, but we can check via class name string or method existence
+                    if hasattr(node, "action_execute_trade"):
+                        node.action_execute_trade()
+                        event.stop() # Prevent 'e' from being typed
+                        return
+                node = node.parent
+        super()._on_key(event)
+
+# ----------------------------------------------------------------------
+# Trade Panel (Persistent Side Panel)
+# ----------------------------------------------------------------------
+
+class TradePanel(Container):
+    """Persistent widget to trade the selected token."""
+
+    BINDINGS = [
+        Binding("b", "set_mode_buy", "Buy (b)", show=True),
+        Binding("s", "set_mode_sell", "Sell (s)", show=True),
+        Binding("e", "execute_trade", "Execute (e)", show=True),
+    ]
+    
+    def set_mode(self, mode: str) -> None:
+        """Switch between buy and sell modes."""
+        self.trade_mode = mode
+        if mode == "buy":
+            self.query_one("#buy_button").add_class("-active")
+            self.query_one("#sell_button").remove_class("-active")
+            self.query_one("#denom_label").update("(SOL)")
+        else:
+            self.query_one("#sell_button").add_class("-active")
+            self.query_one("#buy_button").remove_class("-active")
+            self.query_one("#denom_label").update("(%)")
+            self.query_one("#amount_input").value = "100%"
+        self.update_estimation()
+
+    def __init__(self, id: str = None):
+        super().__init__(id=id)
+        self.token_data = {}
+        self.trade_mode = "buy"
+        self.active_wallet = None
+        self.is_processing = False
+        self.data_provider = None # Will assign later or passed via update
+        self.last_chart_mc = 0.0
+        self.last_buys = -1
+        self.last_sells = -1
+
+    def compose(self) -> ComposeResult:
+        with Container(id="trade_panel_container"):
+            # Spacer above buttons
+            yield Label("", classes="spacer")
+
+            # Buy/Sell Toggle (Moved to Top)
+            with Horizontal(classes="trade_buttons"):
+                yield Button("Buy (b)", id="buy_button", classes="trade_button -active")
+                yield Button("Sell (s)", id="sell_button", classes="trade_button")
+
+            # Spacer
+            yield Label("", classes="spacer")
+
+            yield Label("Trade: None Selected", id="trade_title", classes="panel-header")
+            
+            # Market Stats Box (MC | Vol | Dev | Initial)
+            with Container(classes="stats-grid"):
+                with Horizontal():
+                     yield Label("MC: -", id="mc_label", classes="count-label")
+                     yield Label("Vol: -", id="vol_label", classes="count-label")
+                     yield Label("Dev: -", id="dev_label", classes="count-label")
+                     yield Label("In. Buy: -", id="initial_label", classes="count-label")
+
+            # Trading Stats Box (Tx | Hold | Buys | Sells)
+            with Container(classes="stats-grid"):
+                with Horizontal():
+                     yield Label("Tx: -", id="tx_label", classes="count-label")
+                     yield Label("Hold: -", id="holders_label", classes="count-label")
+                     yield Label("Buys: -", id="buys_label", classes="count-label green")
+                     yield Label("Sells: -", id="sells_label", classes="count-label red")
+
+            # Price Chart Box
+            with Container(classes="stats-grid", id="chart_box"):
+                yield Label("Price (Live):", classes="info-box-header")
+                yield CandleChart(id="price_chart")
+
+            # Contract, Description, & Socials Box
+            with Container(classes="stats-grid"):
+                # Contract with Blue Label
+                yield Label("[#89b4fa]Contract:[/]", id="ca_label", classes="panel-info")
+                
+                yield Label("Description:", classes="info-box-header")
+                yield Label("-", id="desc_label", classes="info-box-text")
+                
+                # Spacer above links
+                yield Label("", classes="spacer")
+                
+                yield Label("Links:", classes="info-box-header")
+                # Stack links vertically
+                with Vertical(classes="social-links"):
+                    yield Label("-", id="website_label", classes="link-item")
+                    yield Label("-", id="twitter_label", classes="link-item")
+                    yield Label("-", id="telegram_label", classes="link-item")
+            
+            # Input Box (Amount | Input | Denom | Est)
+            with Container(id="amount_stats_box", classes="stats-grid"):
+                with Vertical():
+                    with Horizontal(classes="input-row-inner"):
+                        yield Label("Amount:", classes="input_label")
+                        yield TradeInput(value="1.0", id="amount_input", classes="input_field", restrict=r"^[0-9.%]*$")
+                        yield Label("(SOL)", id="denom_label", classes="mini-label")
+                    yield Label("", id="estimated_amount")
+            
+            # Action Button (Centered)
+            with Horizontal(classes="button-row"):
+                yield Button("Execute (e)", variant="success", id="execute_button", classes="action_button")
+            
+            # Feedback (Overlay/Bottom)
+            yield Label("", id="error_label")
+            yield Label("", id="success_label")
+
+    def on_mount(self) -> None:
+        # self.update_mc_ticker = self.set_interval(1.0, self.update_market_stats)
+        pass
+    
+    async def load_active_wallet(self):
+        try:
+            from ..database import db
+            active_doc = await db.settings.find_one({"key": "active_wallet"})
+            if active_doc and "value" in active_doc:
+                pub_key = active_doc["value"]
+                wallet = await db.wallets.find_one({"walletPublicKey": pub_key})
+                if wallet:
+                    wallets = await db.get_wallets()
+                    self.active_wallet = next((w for w in wallets if w["walletPublicKey"] == pub_key), None)
+            
+            if self.active_wallet:
+                pub = self.active_wallet.get("walletPublicKey")
+                display = f"{pub[:6]}...{pub[-6:]}"
+                self.query_one("#active_wallet_info", Label).update(f"Active: [#f9e2af]{display}[/]")
+            else:
+                self.query_one("#active_wallet_info", Label).update("Active: [red]None[/]")
+            
+            await self.fetch_wallet_balance()
+        except Exception as e:
+            self.query_one("#error_label", Label).update(f"Wallet Error")
+
+    async def fetch_wallet_balance(self) -> None:
+        try:
+            if not self.active_wallet: return
+            pub_key = self.active_wallet.get("walletPublicKey")
+            
+            payload = {"jsonrpc": "2.0", "id": 1, "method": "getBalance", "params": [pub_key]}
+            async with httpx.AsyncClient(timeout=2.0) as http_client:
+                response = await http_client.post(config.rpc_url, json=payload)
+                if response.status_code == 200:
+                    data = response.json()
+                    val = data.get("result", {}).get("value")
+                    if val is not None:
+                         bal_sol = val / 1_000_000_000
+                         self.query_one("#wallet_balance", Label).update(f"Bal: {bal_sol:.4f} SOL")
+        except: pass
+
+    def update_token(self, token_data: Dict[str, Any]):
+        """Update the panel with new token data."""
+        new_mint = token_data.get("mint")
+        old_mint = self.token_data.get("mint")
+        
+        self.token_data = token_data
+        
+        name = token_data.get("name", "Unknown")
+        symbol = token_data.get("symbol", "???")
+        self.query_one("#trade_title", Label).update(f"Trade: ${symbol}")
+        
+        # Reset chart trackers if token changed
+        if old_mint != new_mint:
+            self.last_buys = -1
+            self.last_sells = -1
+            try:
+                chart = self.query_one("#price_chart", CandleChart)
+                chart.data = [] # Clear old data
+                # Re-init with new MC if available, else flat
+                mc = token_data.get("marketCapSol", 100.0)
+                chart.initialize_chart(mc)
+            except: pass
+        
+        self.update_market_stats()
+        self.update_info_box()
+        # Reset success/error messages on new token
+        self.query_one("#error_label", Label).update("")
+        self.query_one("#success_label", Label).update("")
+        
+        # Trigger metadata fetch if needed
+        if "metadata" not in token_data and "uri" in token_data and "metadata_fetching" not in token_data:
+            token_data["metadata_fetching"] = True
+            asyncio.create_task(self.fetch_and_update(token_data))
+
+    async def fetch_and_update(self, token_data: Dict[str, Any]) -> None:
+        """Async fetch metadata for TradePanel."""
+        uri = token_data.get("uri")
+        if uri:
+            try:
+                metadata = await fetch_token_metadata(uri)
+            except Exception:
+                metadata = None
+                
+            if metadata:
+                token_data["metadata"] = metadata
+                # Refresh UI if this token is still selected
+                if self.token_data and self.token_data.get("mint") == token_data.get("mint"):
+                    self.update_info_box()
+            else:
+                token_data["metadata"] = {"error": "Failed"}
+            
+            if "metadata_fetching" in token_data:
+                del token_data["metadata_fetching"]
+
+    def update_info_box(self) -> None:
+        """Update the info box with description and social links."""
+        if not self.token_data:
+            return
+        
+        try:
+            meta = self.token_data.get("metadata", {})
+            
+            # Description
+            desc = meta.get("description", "-")
+            if len(desc) > 80:
+                desc = desc[:77] + "..."
+            self.query_one("#desc_label", Label).update(escape(desc) if desc else "-")
+            
+            # Social Links
+            website = meta.get("website", "")
+            twitter = meta.get("twitter", "")
+            telegram = meta.get("telegram", "")
+            
+            def truncate_link(text, limit=35):
+                if len(text) > limit:
+                    return text[:limit-3] + "..."
+                return text
+
+            # Display truncated links or 'None'
+            self.query_one("#website_label", Label).update(f"Web: {truncate_link(website)}" if website else "Web: -")
+            self.query_one("#twitter_label", Label).update(f"X: {truncate_link(twitter)}" if twitter else "X: -")
+            self.query_one("#telegram_label", Label).update(f"TG: {truncate_link(telegram)}" if telegram else "TG: -")
+        except:
+            pass
+
+    def update_market_stats(self) -> None:
+        if not self.token_data: return
+        try:
+            mint = self.token_data.get("mint", "N/A")
+            mc_sol = self.token_data.get("marketCapSol", 0)
+            
+            # Use TokenTable coloring logic
+            mc_thresh = config.thresholds["mc"]
+            mc_style = "green" if mc_sol > mc_thresh["yellow"] else "yellow" if mc_sol >= mc_thresh["red"] else "red"
+            
+            sol_price = getattr(self.app, "sol_price", 0.0)
+            if sol_price > 0:
+                mc_val_usd = mc_sol * sol_price
+                mc_display = f"[{mc_style}]MC: ${mc_val_usd:,.0f}[/]"
+            else:
+                mc_display = f"[{mc_style}]MC: {mc_sol:,.2f} SOL[/]"
+            
+            self.query_one("#mc_label", Label).update(Text.from_markup(mc_display))
+            
+            # Chart Update Logic based on Buys/Sells
+            curr_buys = self.token_data.get("buys_count", 0)
+            curr_sells = self.token_data.get("sells_count", 0)
+            
+            # Initialize tracking if first run for this token
+            if self.last_buys == -1:
+                self.last_buys = curr_buys
+                self.last_sells = curr_sells
+                # Initialize chart flat
+                try:
+                    self.query_one("#price_chart", CandleChart).initialize_chart(mc_sol if mc_sol > 0 else 100.0)
+                except: pass
+            else:
+                d_buys = curr_buys - self.last_buys
+                d_sells = curr_sells - self.last_sells
+                
+                # "only move if there are buy or sells"
+                if d_buys > 0 or d_sells > 0:
+                    trend = "neutral"
+                    if d_buys > d_sells:
+                        trend = "up"
+                    elif d_sells > d_buys:
+                        trend = "down"
+                    
+                    try:
+                        self.query_one("#price_chart", CandleChart).add_candle(trend)
+                    except: pass
+                    
+                    # Update trackers
+                    self.last_buys = curr_buys
+                    self.last_sells = curr_sells
+
+            # Volume Display
+            vol_val = self.token_data.get("volume_sol", 0.0)
+            if sol_price > 0:
+                vol_val_usd = vol_val * sol_price
+                v_thresh = config.thresholds["vol"]
+                v_style = "green" if vol_val_usd > v_thresh["yellow"] else "yellow" if vol_val_usd >= v_thresh["red"] else "red"
+                vol_display = f"[{v_style}]Vol: ${vol_val_usd:,.0f}[/]"
+            else:
+                vol_display = f"Vol: {vol_val:.2f} SOL"
+            
+            self.query_one("#vol_label", Label).update(Text.from_markup(vol_display))
+
+            # Dev Status
+            dev_sold = self.token_data.get("dev_sold", False)
+            dev_str = "[red]Dev: SOLD[/]" if dev_sold else "[green]Dev: HOLDING[/]"
+            self.query_one("#dev_label", Label).update(Text.from_markup(dev_str))
+
+            # Dev Initial Buy
+            init_buy = self.token_data.get("initial_buy", 0.0)
+            # If not stored, try to calculate from data_store if available (usually passed in token_data)
+            # Assuming 'initial_buy' is populated during processing or we fetch it.
+            # For now, default to 0.0 or check if we can derive it.
+            # Actually, we don't have this field yet. Let's add logic to extract it if possible or display placeholder.
+            # In Pump.fun, initial buy is usually the first buy transaction by the creator.
+            # If we don't have it, just show 0.0 or -.
+            self.query_one("#initial_label", Label).update(f"In. Buy: {init_buy:.2f}")
+
+            # Display full CA
+            self.query_one("#ca_label", Label).update(Text.from_markup(f"[#89b4fa]Contract:[/] {mint}"))
+            
+            tx = self.token_data.get("tx_count", 0)
+            tx_thresh = config.thresholds["tx"]
+            tx_style = "green" if tx > tx_thresh["yellow"] else "yellow" if tx >= tx_thresh["red"] else "red"
+            self.query_one("#tx_label", Label).update(Text.from_markup(f"Tx: [{tx_style}]{tx}[/]"))
+            
+            buys = self.token_data.get("buys_count", 0)
+            sells = self.token_data.get("sells_count", 0)
+            self.query_one("#buys_label", Label).update(Text.from_markup(f"Buys: [green]{buys}[/]"))
+            self.query_one("#sells_label", Label).update(Text.from_markup(f"Sells: [red]{sells}[/]"))
+            
+            traders = self.token_data.get("traders", [])
+            h_count = len(traders) if isinstance(traders, (list, set)) else 0
+            h_thresh = config.thresholds["holders"]
+            h_style = "green" if h_count > h_thresh["yellow"] else "yellow" if h_count >= h_thresh["red"] else "red"
+            self.query_one("#holders_label", Label).update(Text.from_markup(f"Hold: [{h_style}]{h_count}[/]"))
+
+            # Simple estimation update
+            self.update_estimation()
+            
+            # Sync active wallet from App
+            if hasattr(self.app, "active_wallet"):
+                self.active_wallet = self.app.active_wallet # Sync ref
+        except: pass
+
+    def update_estimation(self) -> None:
+        try:
+            amount_str = self.query_one("#amount_input", Input).value.strip()
+            
+            # Default empty if no input
+            if not amount_str: 
+                self.query_one("#estimated_amount", Label).update("")
+                return
+            
+            mc_sol = self.token_data.get("marketCapSol", 0)
+            
+            # If MC is missing, we can't estimate
+            if mc_sol <= 0: 
+                self.query_one("#estimated_amount", Label).update("Waiting for MC...")
+                return
+
+            # Price per token (Total Supply 1B)
+            price_sol = mc_sol / 1_000_000_000
+            
+            if self.trade_mode == "buy":
+                # Input is SOL -> Calculate Tokens
+                try:
+                    sol_in = float(amount_str)
+                    tokens_out = sol_in / price_sol
+                    self.query_one("#estimated_amount", Label).update(f"Est: {tokens_out:,.0f} T")
+                except ValueError:
+                     self.query_one("#estimated_amount", Label).update("Invalid")
+            else:
+                # Sell Mode
+                if amount_str.endswith("%"):
+                     self.query_one("#estimated_amount", Label).update(f"Selling {amount_str}")
+                else:
+                    try:
+                        tokens_in = float(amount_str)
+                        sol_out = tokens_in * price_sol
+                        self.query_one("#estimated_amount", Label).update(f"Est: {sol_out:.4f} S")
+                    except ValueError:
+                        self.query_one("#estimated_amount", Label).update("Invalid")
+        except Exception:
+            self.query_one("#estimated_amount", Label).update("")
+
+    # --- Actions ---
+    
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        bid = event.button.id
+        if bid == "buy_button":
+            self.set_mode("buy")
+        elif bid == "sell_button":
+            self.set_mode("sell")
+        elif bid == "execute_button":
+            self.action_execute_trade()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "amount_input":
+             self.update_estimation()
+
+    def action_execute_trade(self):
+        # Validation
+        if not self.active_wallet:
+            self.query_one("#error_label", Label).update("No Wallet")
+            return
+        
+        try:
+            amount_str = self.query_one("#amount_input", Input).value.strip()
+            # Use global config for defaults
+            slippage = config.default_slippage
+            priority_fee = config.default_priority_fee
+            
+            if self.trade_mode == "sell":
+                # Ensure it has % if it's a percentage input
+                amount = amount_str if amount_str.endswith("%") else f"{amount_str}%"
+            else:
+                amount = float(amount_str)
+                
+            denominated_in_sol = (self.trade_mode == "buy")
+            
+            self.is_processing = True
+            self.query_one("#execute_button", Button).disabled = True
+            self.query_one("#execute_button", Button).label = "Processing..."
+            
+            import asyncio
+            asyncio.create_task(self._execute_trade_async(
+                mint=self.token_data.get("mint"),
+                action=self.trade_mode,
+                amount=amount,
+                denominated_in_sol=denominated_in_sol,
+                slippage=slippage,
+                priority_fee=priority_fee
+            ))
+            
+        except Exception as e:
+             self.query_one("#error_label", Label).update("Invalid Input")
+
+    async def _execute_trade_async(self, mint, action, amount, denominated_in_sol, slippage, priority_fee):
+        try:
+            from ..trading import TradingClient
+            priv_key = self.active_wallet.get("privateKey")
+            client = TradingClient(
+                rpc_url=config.rpc_url,
+                wallet_private_key=priv_key,
+                api_key=getattr(config, "api_key", None) if hasattr(config, "api_key") else "" 
+            )
+            
+            signature = await client.execute_trade(
+                mint=mint,
+                action=action,
+                amount=amount,
+                denominated_in_sol=denominated_in_sol,
+                slippage=slippage,
+                priority_fee=priority_fee
+            )
+            
+            self.query_one("#success_label", Label).update(f"Sent: {signature[:8]}...")
+            self.query_one("#error_label", Label).update("")
+            
+            # Refresh balance
+            await asyncio.sleep(2)
+            await self.fetch_wallet_balance()
+
+        except Exception as e:
+            self.query_one("#error_label", Label).update(f"Error: {str(e)[:20]}")
+            with open("error.log", "a") as f:
+                 f.write(f"Panel Trade Error: {e}\n")
+        finally:
+            self.is_processing = False
+            self.query_one("#execute_button", Button).disabled = False
+            self.query_one("#execute_button", Button).label = "Execute (e)"
+
+    def action_set_mode_buy(self) -> None:
+        self.set_mode("buy")
+    
+    def action_set_mode_sell(self) -> None:
+        self.set_mode("sell")
