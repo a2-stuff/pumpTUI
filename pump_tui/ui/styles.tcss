@@ -364,23 +364,21 @@ WalletView, #wallet_view, #wallet_container {
 
 
 #trade_panel_view .count-label {
-    width: 1fr;
-    margin: 0;
+    width: auto;
+    margin-right: 2;
     height: 1;
 }
 
-#trade_panel_view .stats-grid {
-    height: auto;
-    margin: 0;
-    padding: 0 1;
-    border: solid #313244;
-    background: #181825;
+#trade_panel_view #creator_label {
+    width: 1fr;
+    min-width: 22;
 }
 
 #trade_panel_view .stats-grid Horizontal {
     height: 1;
     margin: 0;
     padding: 0;
+    width: 100%;
 }
 
 #trade_panel_view #trade_panel_container {
@@ -440,6 +438,14 @@ WalletView, #wallet_view, #wallet_container {
     height: 10;
 }
 
+#trade_panel_view #trading_stats_box Horizontal {
+    align: center middle;
+}
+
+#trade_panel_view #market_stats_box Horizontal {
+    align: center middle;
+}
+
 #trade_panel_view #amount_stats_box {
     height: 4;
 }
@@ -458,7 +464,7 @@ WalletView, #wallet_view, #wallet_container {
 #trade_panel_view .button-row {
     align: center middle;
     height: 3;
-    margin: 1 0;
+    margin: 0;
 }
 
 #trade_panel_view #error_label {
@@ -506,4 +512,13 @@ WalletView, #wallet_view, #wallet_container {
 
 #trade_panel_view .input_field {
     width: 1fr;
+}
+
+/* Restore Box Borders */
+#trade_panel_view .stats-grid {
+    height: auto;
+    margin: 0;
+    padding: 0 1;
+    border: tall #89b4fa; /* Primary blue border */
+    background: #181825;
 }

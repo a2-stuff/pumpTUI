@@ -106,6 +106,11 @@ class Database:
             if "name" in event: set_ops["name"] = event["name"]
             if "symbol" in event: set_ops["symbol"] = event["symbol"]
             if "marketCapSol" in event: set_ops["marketCapSol"] = float(event["marketCapSol"])
+            if "pool" in event: set_ops["pool"] = event["pool"]
+            
+            if event.get("txType") == "create":
+                set_ops["creator"] = event.get("traderPublicKey")
+
             if "txType" in event:
                 if event["txType"] == "buy": inc_ops["buys_count"] = 1
                 elif event["txType"] == "sell": inc_ops["sells_count"] = 1
@@ -178,6 +183,19 @@ class Database:
         except Exception as e:
             logging.error(f"Get Runners Error: {e}")
             return []
+
+    async def get_creator_stats(self, creator_pubkey: str) -> Dict[str, int]:
+        """Fetch launch and migration counts for a creator."""
+        if not self.connected: return {"launched": 0, "migrated": 0}
+        try:
+            # Count tokens launched by this wallet
+            launched = await self.tokens.count_documents({"creator": creator_pubkey})
+            # Count migrated tokens (pool == "bonk" indicator)
+            migrated = await self.tokens.count_documents({"creator": creator_pubkey, "pool": "bonk"})
+            return {"launched": launched, "migrated": migrated}
+        except Exception as e:
+            logging.error(f"Get Creator Stats Error: {e}")
+            return {"launched": 0, "migrated": 0}
 
     # --- Settings & Wallets ---
 

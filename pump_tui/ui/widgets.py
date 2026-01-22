@@ -213,6 +213,11 @@ class TokenTable(Widget):
              self._pending_updates = True
              return
 
+        # Pause on Scroll: If user is browsing history (cursor > 1), don't shift the table
+        if self.table.cursor_row > 1:
+            self._pending_updates = True
+            return
+
         now = time.time()
         if now - self._last_full_render > self._render_throttle:
              self._last_full_render = now
@@ -1208,15 +1213,29 @@ class TradePanel(Container):
     def set_mode(self, mode: str) -> None:
         """Switch between buy and sell modes."""
         self.trade_mode = mode
+        inp = self.query_one("#amount_input", Input)
+        
         if mode == "buy":
             self.query_one("#buy_button").add_class("-active")
             self.query_one("#sell_button").remove_class("-active")
             self.query_one("#denom_label").update("(SOL)")
+            
+            # Switch to Buy: Strip % and restrict to numbers
+            curr_val = inp.value.replace("%", "").strip()
+            inp.value = curr_val if curr_val else "1.0"
+            inp.restrict = r"^[0-9.]*$"
+            
         else:
             self.query_one("#sell_button").add_class("-active")
             self.query_one("#buy_button").remove_class("-active")
             self.query_one("#denom_label").update("(%)")
-            self.query_one("#amount_input").value = "100%"
+            
+            # Switch to Sell: Append %
+            curr_val = inp.value.replace("%", "").strip()
+            inp.value = (curr_val if curr_val else "100") + "%"
+            # Allow numbers and %
+            inp.restrict = r"^[0-9.%]*$"
+            
         self.update_estimation()
 
     def __init__(self, id: str = None):
@@ -1245,21 +1264,31 @@ class TradePanel(Container):
 
             yield Label("Trade: None Selected", id="trade_title", classes="panel-header")
             
-            # Market Stats Box (MC | Vol | Dev | Initial)
-            with Container(classes="stats-grid"):
+            # Spacer below title
+            yield Label("", classes="spacer")
+            
+            # Market Stats Box (MC | Vol | Dev)
+            with Container(id="market_stats_box", classes="stats-grid"):
                 with Horizontal():
                      yield Label("MC: -", id="mc_label", classes="count-label")
                      yield Label("Vol: -", id="vol_label", classes="count-label")
                      yield Label("Dev: -", id="dev_label", classes="count-label")
-                     yield Label("In. Buy: -", id="initial_label", classes="count-label")
 
             # Trading Stats Box (Tx | Hold | Buys | Sells)
-            with Container(classes="stats-grid"):
+            with Container(id="trading_stats_box", classes="stats-grid"):
                 with Horizontal():
                      yield Label("Tx: -", id="tx_label", classes="count-label")
                      yield Label("Hold: -", id="holders_label", classes="count-label")
                      yield Label("Buys: -", id="buys_label", classes="count-label green")
                      yield Label("Sells: -", id="sells_label", classes="count-label red")
+
+            # Creator Stats Box (Creator | Tokens | Migrated | Int. Buy)
+            with Container(classes="stats-grid"):
+                with Horizontal():
+                     yield Label("Creator: -", id="creator_label", classes="count-label")
+                     yield Label("Tokens: -", id="launched_count_label", classes="count-label")
+                     yield Label("Migrated: -", id="migrated_count_label", classes="count-label")
+                     yield Label("Int. Buy: -", id="initial_label", classes="count-label")
 
             # Price Chart Box
             with Container(classes="stats-grid", id="chart_box"):
@@ -1303,7 +1332,7 @@ class TradePanel(Container):
 
     def on_mount(self) -> None:
         # self.update_mc_ticker = self.set_interval(1.0, self.update_market_stats)
-        pass
+        self.run_worker(self.load_active_wallet())
     
     async def load_active_wallet(self):
         try:
@@ -1501,10 +1530,9 @@ class TradePanel(Container):
             # If not stored, try to calculate from data_store if available (usually passed in token_data)
             # Assuming 'initial_buy' is populated during processing or we fetch it.
             # For now, default to 0.0 or check if we can derive it.
-            # Actually, we don't have this field yet. Let's add logic to extract it if possible or display placeholder.
             # In Pump.fun, initial buy is usually the first buy transaction by the creator.
             # If we don't have it, just show 0.0 or -.
-            self.query_one("#initial_label", Label).update(f"In. Buy: {init_buy:.2f}")
+            self.query_one("#initial_label", Label).update(f"Int. Buy: {init_buy:.2f}")
 
             # Display full CA
             self.query_one("#ca_label", Label).update(Text.from_markup(f"[#89b4fa]Contract:[/] {mint}"))
@@ -1525,6 +1553,17 @@ class TradePanel(Container):
             h_style = "green" if h_count > h_thresh["yellow"] else "yellow" if h_count >= h_thresh["red"] else "red"
             self.query_one("#holders_label", Label).update(Text.from_markup(f"Hold: [{h_style}]{h_count}[/]"))
 
+            # Update Creator Stats
+            creator = self.token_data.get("creator") or self.token_data.get("traderPublicKey", "N/A")
+            if creator and creator != "N/A":
+                display_creator = f"{creator[:4]}...{creator[-4:]}"
+                self.query_one("#creator_label", Label).update(f"Creator: {display_creator}  ")
+                
+                # Fetch launched/migrated counts asynchronously
+                asyncio.create_task(self._fetch_creator_counts(creator))
+            else:
+                self.query_one("#creator_label", Label).update("Creator: N/A")
+
             # Simple estimation update
             self.update_estimation()
             
@@ -1536,41 +1575,35 @@ class TradePanel(Container):
     def update_estimation(self) -> None:
         try:
             amount_str = self.query_one("#amount_input", Input).value.strip()
-            
-            # Default empty if no input
             if not amount_str: 
                 self.query_one("#estimated_amount", Label).update("")
                 return
             
             mc_sol = self.token_data.get("marketCapSol", 0)
-            
-            # If MC is missing, we can't estimate
             if mc_sol <= 0: 
                 self.query_one("#estimated_amount", Label).update("Waiting for MC...")
                 return
 
-            # Price per token (Total Supply 1B)
             price_sol = mc_sol / 1_000_000_000
             
             if self.trade_mode == "buy":
-                # Input is SOL -> Calculate Tokens
                 try:
                     sol_in = float(amount_str)
                     tokens_out = sol_in / price_sol
-                    self.query_one("#estimated_amount", Label).update(f"Est: {tokens_out:,.0f} T")
+                    self.query_one("#estimated_amount", Label).update(f"~ {tokens_out:,.0f} Tokens")
                 except ValueError:
                      self.query_one("#estimated_amount", Label).update("Invalid")
             else:
-                # Sell Mode
-                if amount_str.endswith("%"):
-                     self.query_one("#estimated_amount", Label).update(f"Selling {amount_str}")
-                else:
-                    try:
-                        tokens_in = float(amount_str)
-                        sol_out = tokens_in * price_sol
-                        self.query_one("#estimated_amount", Label).update(f"Est: {sol_out:.4f} S")
-                    except ValueError:
-                        self.query_one("#estimated_amount", Label).update("Invalid")
+                # Sell Mode: amount_str is like "50%" or "100%"
+                # Clean it
+                clean_val = amount_str.replace("%", "").strip()
+                try:
+                    percent = float(clean_val)
+                    # We can't estimate SOL out without knowing user balance of tokens.
+                    # But we can display "Selling X%"
+                    self.query_one("#estimated_amount", Label).update(f"Selling {percent}%")
+                except ValueError:
+                    self.query_one("#estimated_amount", Label).update("Invalid")
         except Exception:
             self.query_one("#estimated_amount", Label).update("")
 
@@ -1587,6 +1620,29 @@ class TradePanel(Container):
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "amount_input":
+             # Auto-format for Sell mode
+             if self.trade_mode == "sell":
+                 val = event.value
+                 
+                 # Cap at 100%
+                 clean_val = val.replace("%", "").strip()
+                 try:
+                     if clean_val and float(clean_val) > 100:
+                         with self.prevent(Input.Changed):
+                             event.input.value = "100%"
+                             val = "100%" # Update local val for logic below
+                 except ValueError:
+                     pass
+
+                 if val and not val.endswith("%"):
+                     # Avoid recursion loop if we change value
+                     with self.prevent(Input.Changed):
+                         event.input.value = val + "%"
+                         # Move cursor to end - 1 (before %) ? Textual input handles cursor?
+                         # Usually just appending works but cursor might jump.
+                         # Simpler: Just rely on update_estimation handling it, but user asked for auto-add.
+                         # If we modify input value here, cursor moves to end.
+             
              self.update_estimation()
 
     def action_execute_trade(self):
@@ -1645,7 +1701,9 @@ class TradePanel(Container):
                 priority_fee=priority_fee
             )
             
-            self.query_one("#success_label", Label).update(f"Sent: {signature[:8]}...")
+            # Show toast notification
+            self.app.notify(f"✅ Transaction sent!\nSig: {signature[:8]}...", severity="information", title="Trade Executed")
+            self.query_one("#success_label", Label).update("") # Clear old label
             self.query_one("#error_label", Label).update("")
             
             # Refresh balance
@@ -1653,13 +1711,26 @@ class TradePanel(Container):
             await self.fetch_wallet_balance()
 
         except Exception as e:
-            self.query_one("#error_label", Label).update(f"Error: {str(e)[:20]}")
+            # Show error toast
+            self.app.notify(f"❌ Trade Failed: {str(e)[:100]}", severity="error", title="Error")
+            self.query_one("#error_label", Label).update("") # Clear old label
             with open("error.log", "a") as f:
                  f.write(f"Panel Trade Error: {e}\n")
         finally:
             self.is_processing = False
             self.query_one("#execute_button", Button).disabled = False
             self.query_one("#execute_button", Button).label = "Execute (e)"
+
+    async def _fetch_creator_counts(self, creator_pubkey: str):
+        """Fetch and update creator launched/migrated counts from DB."""
+        try:
+            from ..database import db
+            stats = await db.get_creator_stats(creator_pubkey)
+            if self.is_mounted:
+                self.query_one("#launched_count_label", Label).update(f"Tokens: {stats['launched']}")
+                self.query_one("#migrated_count_label", Label).update(f"Migrated: {stats['migrated']}")
+        except:
+            pass
 
     def action_set_mode_buy(self) -> None:
         self.set_mode("buy")
