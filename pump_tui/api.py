@@ -13,7 +13,7 @@ class PumpPortalClient:
 
     async def connect(self):
         """Establish the WebSocket connection."""
-        if self.websocket and self.websocket.open:
+        if self.websocket and not self.websocket.closed:
             return  # Reuse existing connection
 
         try:

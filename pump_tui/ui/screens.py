@@ -419,7 +419,7 @@ class TradeModal(ModalScreen):
         self.data_provider = data_provider
         self.trade_mode = "buy"  # "buy" or "sell"
         self.is_processing = False
-        self.active_wallet = config.get_active_wallet()
+        self.active_wallet = None
     
     def compose(self) -> ComposeResult:
         mint = self.token_data.get("mint", "N/A")
@@ -443,8 +443,12 @@ class TradeModal(ModalScreen):
             yield Label(f"Mint: {display_mint} | MC: {mc_sol:,.2f} SOL {mc_usd_str}", id="token_info")
             
             # Active Wallet Display
-            active_pub = self.active_wallet.get("walletPublicKey", "No Wallet Found")
-            active_display = f"{active_pub[:6]}...{active_pub[-6:]}" if len(active_pub) > 12 else active_pub
+            # Active Wallet Display
+            active_display = "Loading..."
+            if self.active_wallet:
+                active_pub = self.active_wallet.get("walletPublicKey", "No Wallet Found")
+                active_display = f"{active_pub[:6]}...{active_pub[-6:]}" if len(active_pub) > 12 else active_pub
+            
             yield Label(f"Active Wallet: [#f9e2af]{active_display}[/]", id="active_wallet_info")
             
             # Info Row: Tx and Holders
@@ -487,18 +491,51 @@ class TradeModal(ModalScreen):
             yield Label("", id="error_label")
             yield Label("", id="success_label")
             
-            # Wallet Balance
-            yield Label("Loading wallet...", id="wallet_balance")
-            
             # Action buttons
             with Horizontal(classes="action_buttons"):
                 yield Button("Execute Trade (e)", variant="success", id="execute_button", classes="action_button")
                 yield Button("Cancel (c)", variant="error", id="cancel_button", classes="action_button")
+            
+            # Wallet Balance (Moved below buttons)
+            yield Label("Loading wallet...", id="wallet_balance")
 
 
 
             
 
+
+    async def load_active_wallet(self):
+        try:
+            from ..database import db
+            # Get active wallet key
+            active_doc = await db.settings.find_one({"key": "active_wallet"})
+            if active_doc and "value" in active_doc:
+                pub_key = active_doc["value"]
+                # Get wallet details (including encrypted PK)
+                wallet = await db.wallets.find_one({"walletPublicKey": pub_key})
+                
+                if wallet:
+                    # Decrypt private key if possible (db connection has cipher access logic but we might need to use get_wallets helper or decrypt manually)
+                    # Actually db.get_wallets() handles decryption. Let's use that but filter.
+                    # Or better: add get_wallet(pub_key) to db? 
+                    # For now let's use db.get_wallets() and find it, it's safer for decryption logic reuse
+                    
+                    wallets = await db.get_wallets()
+                    self.active_wallet = next((w for w in wallets if w["walletPublicKey"] == pub_key), None)
+            
+            # Update UI
+            if self.active_wallet:
+                pub = self.active_wallet.get("walletPublicKey")
+                display = f"{pub[:6]}...{pub[-6:]}"
+                self.query_one("#active_wallet_info", Label).update(f"Active Wallet: [#f9e2af]{display}[/]")
+            else:
+                self.query_one("#active_wallet_info", Label).update("Active Wallet: [red]None Selected[/]")
+                
+            # Now fetch balance
+            await self.fetch_wallet_balance()
+            
+        except Exception as e:
+            self.app.notify(f"Wallet Load Error: {e}", severity="error")
 
     def on_mount(self) -> None:
         """Start updates on mount."""
@@ -507,8 +544,8 @@ class TradeModal(ModalScreen):
             self.update_estimation()
             # Start real-time MC updates
             self.update_mc_ticker = self.set_interval(1.0, self.update_market_stats)
-            # Fetch wallet balance
-            self.run_worker(self.fetch_wallet_balance())
+            # Fetch wallet info
+            self.run_worker(self.load_active_wallet())
         except Exception as e:
             self.app.notify(f"TradeModal Error: {e}", severity="error")
 

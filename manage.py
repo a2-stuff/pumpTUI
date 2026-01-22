@@ -6,9 +6,20 @@ import os
 def start():
     """Start the pumpTUI application."""
     print("Starting pumpTUI...")
+    
+    # Detect Virtual Environment
+    python_exec = sys.executable
+    venv_python = os.path.join(os.getcwd(), ".venv", "bin", "python")
+    
+    if os.path.exists(venv_python):
+        print(f"Using Virtual Environment: {venv_python}")
+        python_exec = venv_python
+    else:
+        print(f"Using System Python: {python_exec}")
+
     try:
         # Run the app module
-        subprocess.run([sys.executable, "-m", "pump_tui.ui.app"])
+        subprocess.run([python_exec, "-m", "pump_tui.ui.app"])
     except KeyboardInterrupt:
         print("\nExiting pumpTUI.")
     except Exception as e:

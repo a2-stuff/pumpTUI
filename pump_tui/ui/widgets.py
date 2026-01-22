@@ -16,6 +16,8 @@ class TokenTable(Widget):
 
     def __init__(self, fetch_method: Callable[[], Awaitable[List[Dict[str, Any]]]] = None, title: str = "Tokens", id: str = None):
         super().__init__(id=id)
+        from ..database import db
+        self.db = db # Store ref for easy access
         self.fetch_method = fetch_method
         self.table_title = title
         self.table = DataTable(id="tokens_data_table")
@@ -24,6 +26,7 @@ class TokenTable(Widget):
         self._last_age_values: Dict[str, str] = {} # Performance: Cache age strings
         self._render_throttle = 0.5 # Minimum s between full renders
         self._last_full_render = 0.0
+        self._tabbed_content = None # Cache for efficiency
         
         # Pagination & Search
         self.history: List[Dict[str, Any]] = []
@@ -47,6 +50,8 @@ class TokenTable(Widget):
 
     def on_mount(self) -> None:
         self.table.cursor_type = "row"
+        self.table_title = "New Tokens (Live)"
+        self.table.border_title = self.table_title
         cols = self.table.add_columns("Token CA", "Name", "Ticker", "MC ($)", "Tx", "Hold", "Buys", "Sells", "Vol ($)", "Dev", "Age")
         # Store MC column key specifically
         if len(cols) >= 4:
@@ -70,18 +75,24 @@ class TokenTable(Widget):
         self.set_interval(1.0, self._update_ages)
         self.set_interval(0.5, self.on_timer)
         
-        if self.fetch_method:
-            self.load_data()
+        # Initial Load
+        asyncio.create_task(self.load_data())
 
     async def load_data(self) -> None:
-        if not self.fetch_method:
-            return
-        try:
-            items = await self.fetch_method()
-            for item in items:
-                self.process_event(item)
-        except Exception:
-            pass
+        # Wait for DB connection if needed (Startup Race)
+        for _ in range(5):
+             if self.db and self.db.connected:
+                 break
+             await asyncio.sleep(1.0)
+
+        # Load recent tokens from DB as history
+        if self.db and self.db.connected:
+             try:
+                 items = await self.db.get_recent_tokens(limit=100)
+                 for item in reversed(items): # Insert oldest first so newest ends up at top of list
+                     self.add_new_token(item)
+             except Exception:
+                 pass
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Filter the list when input changes."""
@@ -168,7 +179,10 @@ class TokenTable(Widget):
             
         try:
             # Only render if we are on the active tab
-            if self.app.query_one("TabbedContent").active != "new":
+            if not self._tabbed_content:
+                self._tabbed_content = self.app.query_one("TabbedContent")
+            
+            if self._tabbed_content.active != "new":
                 self._pending_updates = True
                 return
         except:
@@ -179,6 +193,20 @@ class TokenTable(Widget):
         if now - self._last_full_render > self._render_throttle:
              self._last_full_render = now
              self._pending_updates = False
+             
+             # Auto-Sort if active
+             if getattr(self, "limit_sorting", False):
+                 sort_field = getattr(self, "last_sort_field", None)
+                 reverse = getattr(self, "last_sort_reverse", True)
+                 if sort_field:
+                     def key_func(x):
+                         val = x.get(sort_field, 0)
+                         try:
+                             return float(val) if val is not None else 0.0
+                         except ValueError:
+                             return 0.0
+                     self.filtered_history.sort(key=key_func, reverse=reverse)
+             
              self.render_page()
         else:
              self._pending_updates = True
@@ -269,8 +297,11 @@ class TokenTable(Widget):
                 if holders_col:
                      self.table.update_cell(mint, holders_col, Text.from_markup(f"[{h_style}]{traders_count}[/]"))
             except Exception:
-                # Silently fail if row not in table (paginated out)
                 pass
+        
+        # Trigger re-sort if we are sorting and something changed
+        if getattr(self, "limit_sorting", False):
+            self._pending_updates = True
 
         # --- Aggregation Logic ---
         # Track Traders
@@ -414,32 +445,41 @@ class TokenTable(Widget):
         
         if match:
             self.filtered_history.insert(0, item)
-            # If filtered list gets too big? It's just a view.
             
-            # Update view ONLY if we are on the first page AND the widget is effectively visible
-            # Accessing the parent TabPane to see if it's active is a robust way, 
-            # or checking if we are in the active DOM branch.
-            # Textual doesn't have a simple "is_effectively_visible" for tabs yet without checking parents.
-            # But checking if we are visible is a good proxy if standard visibility is used.
-            # However, TabbedContent hides content by `display: position/none`.
-            
-            
-            # Default to False to prevent background updates from stealing focus/tab
             should_render = False
-            
-            if self.current_page == 1:
+            if self.current_page == 1 and self.table.is_mounted:
                 try:
-                    # Check if our parent tab is the active one
-                    # We query by type name "TabbedContent"
-                    tab_content = self.app.query_one("TabbedContent")
-                    if tab_content.active == "new":
+                    if not self._tabbed_content:
+                        self._tabbed_content = self.app.query_one("TabbedContent")
+                    if self._tabbed_content.active == "new":
                         should_render = True
-                except Exception:
-                    # If we can't find the tab content or app, assume we are hidden
-                    should_render = False
+                except: pass
 
             if should_render:
-                self._request_render()
+                # Flag for update instead of manual row manipulation
+                # This ensures consistent ordering via render_page
+                self._pending_updates = True
+                
+                # Maintain cursor? render_page handles state restoration if we pass logic?
+                # Actually _request_render stores state.
+                pass
+
+
+                
+                # Maintain page size limit
+                if self.table.row_count > self.page_size:
+                    # Remove the last row to stay within page boundary
+                    # We need the key of the last row
+                    last_idx = self.table.row_count - 1
+                    try:
+                        # row_at returns the row object/data? No, table.rows is a dict?
+                        # Coordinate to row key
+                        last_row_key = self.table.coordinate_to_cell_key((last_idx, 0)).row_key
+                        self.table.remove_row(last_row_key)
+                    except: pass
+                
+                # Update labels without full re-render
+                self.query_one("#page_label", Label).update(f"Page {self.current_page} (Total: {len(self.filtered_history)})")
             else:
                 self._pending_updates = True
 
@@ -503,119 +543,9 @@ class TokenTable(Widget):
         page_items = source_list[start_idx:end_idx]
         
         for item in page_items:
+            row_data = self._format_row_data(item)
             mint = item.get("mint", "N/A")
-            name = item.get("name", "N/A")
-            # Truncate Name
-            if len(name) > 22:
-                name = rf"{name[:5]}...{name[-5:]}"
-            
-            raw_symbol = item.get("symbol", "N/A")
-            symbol = f"${raw_symbol}" if raw_symbol != "N/A" else "N/A"
-            market_cap = f"{item.get('market_cap', 0):.2f}"
-            mc_val = item.get('marketCapSol', 0)
-            mc_thresh = config.thresholds["mc"]
-            if mc_val > mc_thresh["yellow"]:
-                mc_style = "green"
-            elif mc_val >= mc_thresh["red"]:
-                mc_style = "yellow"
-            else:
-                mc_style = "red"
-            
-            sol_price = getattr(self.app, "sol_price", 0.0)
-            if sol_price > 0:
-                mc_val_usd = mc_val * sol_price
-                market_cap = f"[{mc_style}]${mc_val_usd:,.0f}[/]"
-            else:
-                market_cap = f"[{mc_style}]{mc_val:.2f} S[/]"
-            
-            # Ensure we have a timestamp for age calc
-            ts = item.get("timestamp")
-            
-            # Removed 'created' string generation as per instruction
-            # if "timestamp" in item:
-            #      try:
-            #          ts = item.get("timestamp")
-            #          if isinstance(ts, (int, float)):
-            #              created = datetime.fromtimestamp(ts).strftime("%H:%M:%S")
-            #      except:
-            #          pass
-            
-            # if created == "N/A":
-            #      created = item.get("_received_at", "?") 
-            #      if created == "?":
-            #          from datetime import datetime
-            #          created = datetime.now().strftime("%H:%M:%S")
-
-            display_mint = mint
-            if len(mint) > 10:
-                display_mint = f"{mint[:4]}...{mint[-4:]}"
-                
-            tx_val = item.get("tx_count", 1)
-            tx_thresh = config.thresholds["tx"]
-            if tx_val > tx_thresh["yellow"]:
-                tx_style = "green"
-            elif tx_val >= tx_thresh["red"]:
-                tx_style = "yellow"
-            else:
-                tx_style = "red"
-            tx_count = f"[{tx_style}]{tx_val}[/]"
-            
-            h_val = len(item.get("traders", set()))
-            h_thresh = config.thresholds["holders"]
-            if h_val > h_thresh["yellow"]:
-                h_style = "green"
-            elif h_val >= h_thresh["red"]:
-                h_style = "yellow"
-            else:
-                h_style = "red"
-            holders = f"[{h_style}]{h_val}[/]"
-            
-            # Buys/Sells
-            buys_val = item.get("buys_count", 0)
-            sells_val = item.get("sells_count", 0)
-            buys_str = f"[green]{buys_val}[/]"
-            sells_str = f"[red]{sells_val}[/]"
-
-            # Initial Age Calculation
-            age_str = "0s"
-            if ts and isinstance(ts, (int, float)):
-                now_ts = time.time()
-                diff = int(now_ts - ts)
-                if diff < 60:
-                     age_str = f"{diff}s"
-                elif diff < 3600:
-                     m = diff // 60
-                     s = diff % 60
-                     age_str = f"{m}m {s}s"
-                else:
-                     h = diff // 3600
-                     m = (diff % 3600) // 60
-                     age_str = f"{h}h {m}m"
-            
-            # Volume
-            vol_val = item.get("volume_sol", 0.0)
-            sol_price = getattr(self.app, "sol_price", 0.0)
-            if sol_price > 0:
-                 vol_val_usd = vol_val * sol_price
-                 v_thresh = config.thresholds["vol"]
-                 if vol_val_usd > v_thresh["yellow"]:
-                     v_style = "green"
-                 elif vol_val_usd >= v_thresh["red"]:
-                     v_style = "yellow"
-                 else:
-                     v_style = "red"
-                 vol_str = f"[{v_style}]${vol_val_usd:,.0f}[/]"
-            else:
-                 vol_str = f"{vol_val:.2f} S"
-
-            # Dev Sold
-            dev_sold = item.get("dev_sold", False)
-            if dev_sold:
-                dev_str = "[green]SOLD[/]"
-            else:
-                dev_str = "[red]HOLDING[/]"
-
-            self.table.add_row(display_mint, name, symbol, Text.from_markup(market_cap), Text.from_markup(tx_count), Text.from_markup(holders), Text.from_markup(buys_str), Text.from_markup(sells_str), Text.from_markup(vol_str), Text.from_markup(dev_str), age_str, key=mint)
+            self.table.add_row(*row_data, key=mint)
         
         # 3. Restore state (Robust)
         if saved_key:
@@ -639,6 +569,145 @@ class TokenTable(Widget):
         self.query_one("#page_label", Label).update(f"Page {self.current_page} (Total: {len(source_list)})")
         self.query_one("#btn_newer", Button).disabled = (self.current_page <= 1)
         self.query_one("#btn_older", Button).disabled = (end_idx >= len(source_list))
+
+    def _format_row_data(self, item: Dict[str, Any]) -> List[Any]:
+        """Format token data for a DataTable row."""
+        mint = item.get("mint", "N/A")
+        name = item.get("name", "N/A")
+        if len(name) > 22:
+            name = rf"{name[:5]}...{name[-5:]}"
+        
+        raw_symbol = item.get("symbol", "N/A")
+        symbol = f"${raw_symbol}" if raw_symbol != "N/A" else "N/A"
+        
+        mc_val = item.get('marketCapSol', 0)
+        mc_thresh = config.thresholds["mc"]
+        mc_style = "green" if mc_val > mc_thresh["yellow"] else "yellow" if mc_val >= mc_thresh["red"] else "red"
+        
+        sol_price = getattr(self.app, "sol_price", 0.0)
+        if sol_price > 0:
+            mc_val_usd = mc_val * sol_price
+            market_cap = f"[{mc_style}]${mc_val_usd:,.0f}[/]"
+        else:
+            market_cap = f"[{mc_style}]{mc_val:.2f} S[/]"
+            
+        display_mint = f"{mint[:4]}...{mint[-4:]}" if len(mint) > 10 else mint
+        
+        tx_val = item.get("tx_count", 0)
+        tx_thresh = config.thresholds["tx"]
+        tx_style = "green" if tx_val > tx_thresh["yellow"] else "yellow" if tx_val >= tx_thresh["red"] else "red"
+        tx_count = f"[{tx_style}]{tx_val}[/]"
+        
+        h_val = len(item.get("traders", set()))
+        h_thresh = config.thresholds["holders"]
+        h_style = "green" if h_val > h_thresh["yellow"] else "yellow" if h_val >= h_thresh["red"] else "red"
+        holders = f"[{h_style}]{h_val}[/]"
+        
+        buys_str = f"[green]{item.get('buys_count', 0)}[/]"
+        sells_str = f"[red]{item.get('sells_count', 0)}[/]"
+        
+        # Age
+        ts = item.get("timestamp")
+        age_str = "0s"
+        if ts and isinstance(ts, (int, float)):
+            diff = int(time.time() - ts)
+            if diff < 60: age_str = f"{diff}s"
+            elif diff < 3600: age_str = f"{diff // 60}m {diff % 60}s"
+            else: age_str = f"{diff // 3600}h {(diff % 3600) // 60}m"
+        
+        # Volume
+        vol_val = item.get("volume_sol", 0.0)
+        if sol_price > 0:
+            vol_val_usd = vol_val * sol_price
+            v_thresh = config.thresholds["vol"]
+            v_style = "green" if vol_val_usd > v_thresh["yellow"] else "yellow" if vol_val_usd >= v_thresh["red"] else "red"
+            vol_str = f"[{v_style}]${vol_val_usd:,.0f}[/]"
+        else:
+            vol_str = f"{vol_val:.2f} S"
+            
+        dev_str = "[green]SOLD[/]" if item.get("dev_sold", False) else "[red]HOLDING[/]"
+        
+        return [
+            display_mint, 
+            name, 
+            symbol, 
+            Text.from_markup(market_cap), 
+            Text.from_markup(tx_count), 
+            Text.from_markup(holders), 
+            Text.from_markup(buys_str), 
+            Text.from_markup(sells_str), 
+            Text.from_markup(vol_str), 
+            Text.from_markup(dev_str),
+            age_str
+        ]
+
+    def sort_data(self, sort_field: str, reverse: bool = True):
+        """Sort the underlying data and re-render."""
+        try:
+             self.limit_sorting = True
+             
+             def key_func(x):
+                 val = x.get(sort_field, 0)
+                 if val is None: return 0
+                 return float(val)
+
+             self.filtered_history.sort(key=key_func, reverse=reverse)
+             
+             # Re-render
+             self.current_page = 1
+             self.render_page()
+             
+             title_map = {"marketCapSol": "MC", "volume_sol": "Volume", "timestamp": "Live"}
+             self.table_title = f"New Tokens ({title_map.get(sort_field, sort_field)} ↓)"
+             try:
+                 self.table.border_title = self.table_title
+             except: pass
+
+        except Exception as e:
+            with open("error.log", "a") as f:
+                f.write(f"Sort Error: {e}\n")
+
+    def sort_data(self, sort_field: str, reverse: bool = True):
+        """Sort the underlying data and re-render."""
+        try:
+             self.limit_sorting = True
+             self.last_sort_field = sort_field # Store for auto-sort
+             self.last_sort_reverse = reverse
+             
+             def key_func(x):
+                 val = x.get(sort_field, 0)
+                 try:
+                     return float(val) if val is not None else 0.0
+                 except ValueError:
+                     return 0.0
+
+             self.filtered_history.sort(key=key_func, reverse=reverse)
+             
+             # Re-render
+             self.current_page = 1
+             self.render_page()
+             
+             title_map = {"marketCapSol": "MC", "volume_sol": "Volume", "timestamp": "Live"}
+             self.table_title = f"New Tokens ({title_map.get(sort_field, sort_field)} ↓)"
+             try:
+                 self.table.border_title = self.table_title
+             except: pass
+
+        except Exception as e:
+            with open("error.log", "a") as f:
+                f.write(f"Sort Error: {e}\n")
+
+    def reset_sort_live(self):
+        """Reset to Live/Age sort (Newest First)."""
+        self.limit_sorting = False
+        # Sort by timestamp descending
+        self.filtered_history.sort(key=lambda x: x.get("timestamp", 0) or 0, reverse=True)
+        self.current_page = 1
+        self.render_page()
+        self.table_title = "New Tokens (Live)"
+        try:
+            self.table.border_title = self.table_title
+        except: pass
         
         # self.table.cursor_type = "row" 
     
@@ -654,15 +723,8 @@ class TokenTable(Widget):
                 self.render_page()
 
     async def load_data(self) -> None:
-        if not self.fetch_method:
-            return
-        # Initial load (if any)
-        try:
-            items = await self.fetch_method()
-            for item in items:
-                self.add_token(item)
-        except Exception:
-            pass
+         # Initial load handled in on_mount via DB check usually
+         pass
             
     # Selection is handled by the App to coordinate between table and detail view.
 
@@ -854,3 +916,212 @@ class TokenDetail(Static):
                 del token_data["metadata_fetching"]
 
 
+
+class VolumeTable(TokenTable):
+    """
+    A table that polls MongoDB for top volume tokens (Last 24h).
+    Inherits from TokenTable to reuse formatting and selection logic.
+    """
+    
+    def __init__(self, id: str = None):
+        super().__init__(fetch_method=None, title="Top Volume (24h)", id=id)
+        self.polling_interval = 2.0
+        # Override columns: Swap 'Age' for 'Vol 24h'
+        self.column_keys = {} # Reset to clear parent setup, will be rebuilt in on_mount
+
+    def on_mount(self) -> None:
+        self.table.cursor_type = "row"
+        
+        # Define Columns (Slightly different from TokenTable)
+        cols = self.table.add_columns(
+            "Token CA", "Name", "Ticker", 
+            "MC ($)", "Tx", "Hold", 
+            "Buys", "Sells", "Vol (24h)", # Changed label
+            "Dev", "Last Upd" # Changed Age -> Last Updated
+        )
+        
+        # Map keys for reuse of formatting logic where applicable
+        if len(cols) >= 4: self.column_keys["MC ($)"] = cols[3]
+        if len(cols) >= 5: self.column_keys["Tx"] = cols[4]
+        if len(cols) >= 6: self.column_keys["Hold"] = cols[5]
+        if len(cols) >= 7: self.column_keys["Buys"] = cols[6]
+        if len(cols) >= 8: self.column_keys["Sells"] = cols[7]
+        if len(cols) >= 9: self.column_keys["Vol ($)"] = cols[8] # Maps to Vol 24h column
+        if len(cols) >= 10: self.column_keys["Dev"] = cols[9]
+        if len(cols) >= 11: self.column_keys["Age"] = cols[10] # Maps to Last Upd
+        
+        self.set_interval(self.polling_interval, self.refresh_data)
+        asyncio.create_task(self.refresh_data())
+
+    async def refresh_data(self) -> None:
+        """Fetch sorted data from DB and update table."""
+        # Only refresh if visible
+        try:
+            if not self.table.is_mounted: return
+            # Check active tab to save resources
+            if not self._tabbed_content:
+                self._tabbed_content = self.app.query_one("TabbedContent")
+            
+            if self._tabbed_content.active != "trending":
+                return
+        except:
+            pass
+
+        try:
+            from ..database import db
+            tokens = await db.get_top_volume_tokens(limit=50)
+            
+            # Save state
+            saved_key = None
+            if self.table.cursor_row >= 0:
+                 try:
+                     saved_key = self.table.get_cursor_row_key()
+                 except: pass
+            
+            self.table.clear()
+            
+            for token in tokens:
+                # Normalize Volume Field for format_row_data
+                token["volume_sol"] = token.get("volume_24h", 0)
+                
+                # Format
+                row_data = self._format_row_data(token)
+                
+                # Insert
+                mint = token.get("mint", "N/A")
+                self.data_store[mint] = token # Sync local store for details view
+                self.table.add_row(*row_data, key=mint)
+            
+            # Restore state
+            if saved_key:
+                try:
+                    dest_row = self.table.get_row_index(saved_key)
+                    self.table.move_cursor(row=dest_row, animate=False)
+                except: pass
+                
+        except Exception as e:
+            with open("error.log", "a") as f:
+                f.write(f"Volume Table Error: {e}\n")
+
+    def _format_row_data(self, item: Dict[str, Any]) -> List[Any]:
+        # Reuse parent formatting but override Age logic since this is Last Updated
+        row = super()._format_row_data(item)
+        
+        # Override last column (Age) with Last Updated Time
+        last_upd = item.get("last_updated")
+        if isinstance(last_upd, datetime):
+            time_str = last_upd.strftime("%H:%M:%S")
+            row[-1] = time_str
+        
+        return row
+
+class RunnersTable(TokenTable):
+    """
+    A table that polls MongoDB for top volume tokens (Last 12h).
+    Supports sorting by Volume and Market Cap.
+    """
+    
+    def __init__(self, id: str = None):
+        super().__init__(fetch_method=None, title="Runners (12h)", id=id)
+        self.polling_interval = 2.0
+        self.sort_by = "volume" # or "market_cap"
+        self.sort_dir = -1 # Descending
+        self.column_keys = {}
+
+    def on_mount(self) -> None:
+        self.table.cursor_type = "row"
+        
+        # Define Columns with specific IDs for click tracking
+        # We need to use Text objects or string keys if API allows
+        # Since Textual 0.70 DataTable doesn't have easy header click events, 
+        # we will simulate it via an Action or ignore header clicks if not supported.
+        # Actually latest Textual supports on_data_table_header_selected if headers are clicked.
+        
+        cols = self.table.add_columns(
+            "Token CA", "Name", "Ticker", 
+            "MC ($) [Sort]", # Hint sorting
+            "Tx", "Hold", 
+            "Buys", "Sells", "Vol (12h) [Sort]", 
+            "Dev", "Last Upd"
+        )
+        
+        # Map keys
+        if len(cols) >= 4: self.column_keys["MC ($)"] = cols[3]
+        if len(cols) >= 9: self.column_keys["Vol ($)"] = cols[8]
+        
+        self.set_interval(self.polling_interval, self.refresh_data)
+        asyncio.create_task(self.refresh_data())
+
+    async def toggle_sort(self, sort_key: str):
+        """Toggle sort order."""
+        if self.sort_by == sort_key:
+            # Toggle direction: desc (-1) -> asc (1) -> desc (-1)
+            self.sort_dir *= -1
+        else:
+            self.sort_by = sort_key
+            self.sort_dir = -1 # Default desc
+            
+        # Update Title
+        arrow = "↓" if self.sort_dir == -1 else "↑"
+        label = "Vol" if self.sort_by == "volume" else "MC"
+        self.table_title = f"Runners (12h) - {label} {arrow}"
+        
+        # Trigger immediate refresh
+        await self.refresh_data()
+
+    async def refresh_data(self) -> None:
+        """Fetch sorted data from DB."""
+        try:
+            if not self.table.is_mounted: return
+            if not self._tabbed_content:
+                self._tabbed_content = self.app.query_one("TabbedContent")
+            
+            if self._tabbed_content.active != "trending":
+                return
+        except: pass
+
+        try:
+            if self.db and self.db.connected:
+                tokens = await self.db.get_runners(limit=50, sort_by=self.sort_by, sort_dir=self.sort_dir)
+                
+                # Save state
+                saved_key = None
+                if self.table.cursor_row >= 0:
+                     try:
+                         saved_key = self.table.get_cursor_row_key()
+                     except: pass
+                
+                self.table.clear()
+                
+                for token in tokens:
+                    # Normalize Volume Logic for display
+                    # If we sort by MC, volume might be missing if no trades in 12h but strictly it's a runner query
+                    token["volume_sol"] = token.get("volume_12h", 0)
+                    
+                    row_data = self._format_row_data(token)
+                    mint = token.get("mint", "N/A")
+                    self.data_store[mint] = token
+                    self.table.add_row(*row_data, key=mint)
+                
+                if saved_key:
+                    try:
+                        dest_row = self.table.get_row_index(saved_key)
+                        self.table.move_cursor(row=dest_row, animate=False)
+                    except: pass
+        except Exception as e:
+            with open("error.log", "a") as f:
+                f.write(f"Runners Error: {e}\n")
+
+    def _format_row_data(self, item: Dict[str, Any]) -> List[Any]:
+        row = super()._format_row_data(item)
+        last_upd = item.get("last_updated")
+        if isinstance(last_upd, datetime):
+            row[-1] = last_upd.strftime("%H:%M:%S")
+        return row
+    
+    # Simple keybindings to toggle sort since mouse header click isn't standard in older Textual
+    def key_m(self): # Sort by Market Cap
+        asyncio.create_task(self.toggle_sort("market_cap"))
+    
+    def key_v(self): # Sort by Volume
+        asyncio.create_task(self.toggle_sort("volume"))

@@ -16,89 +16,66 @@ class Config:
 
     def __init__(self):
         self.thresholds = self.DEFAULT_THRESHOLDS.copy()
-        # Trading configuration
-        # Trading configuration
         from .helpers import get_env_var
         self.rpc_url = get_env_var("RPC_URL") or "https://api.mainnet-beta.solana.com"
-        # Wallet is now managed via Wallet Manager (wallets.json)
+        self.mongo_uri = get_env_var("MONGO_URI") or "mongodb://localhost:27017"
         self.default_slippage = float(get_env_var("DEFAULT_SLIPPAGE") or "10")
         self.default_priority_fee = float(get_env_var("DEFAULT_PRIORITY_FEE") or "0.005")
-        self.load()
 
-    def load(self):
-        """Load configuration from file."""
-        if os.path.exists(self.CONFIG_FILE):
-            try:
-                with open(self.CONFIG_FILE, "r") as f:
-                    data = json.load(f)
-                    # Merge with defaults to ensure all keys exist
-                    if "thresholds" in data:
-                        for key, val in data["thresholds"].items():
-                            if key in self.thresholds:
-                                self.thresholds[key].update(val)
-                    # Load trading config (with env var fallback)
-                    if "rpc_url" in data:
-                        self.rpc_url = data["rpc_url"]
-                    if "default_slippage" in data:
-                        self.default_slippage = data["default_slippage"]
-                    if "default_priority_fee" in data:
-                        self.default_priority_fee = data["default_priority_fee"]
-            except Exception:
-                pass # Fallback to defaults
-
-    def save(self):
-        """Save configuration to file."""
+    async def load_from_db(self):
+        """Load configuration from MongoDB."""
+        from .database import db
+        if not db.connected: return
+        
         try:
-            with open(self.CONFIG_FILE, "w") as f:
-                json.dump({
-                    "thresholds": self.thresholds,
-                    "rpc_url": self.rpc_url,
-                    "default_slippage": self.default_slippage,
-                    "default_priority_fee": self.default_priority_fee
-                }, f, indent=4)
+            # Load thresholds
+            t = await db.get_setting("thresholds")
+            if t and isinstance(t, dict):
+                for key, val in t.items():
+                    if key in self.thresholds:
+                        self.thresholds[key].update(val)
+            
+            # Load RPC
+            rpc = await db.get_setting("rpc_url")
+            if rpc: self.rpc_url = rpc
+            
+            # Load defaults
+            slip = await db.get_setting("default_slippage")
+            if slip: self.default_slippage = float(slip)
+            
+            fee = await db.get_setting("default_priority_fee")
+            if fee: self.default_priority_fee = float(fee)
+            
         except Exception:
-            pass
+            pass 
+
+    async def save_to_db(self):
+        """Save current config to MongoDB."""
+        from .database import db
+        if not db.connected: return
+        
+        await db.save_setting("thresholds", self.thresholds)
+        await db.save_setting("rpc_url", self.rpc_url)
+        await db.save_setting("default_slippage", self.default_slippage)
+        await db.save_setting("default_priority_fee", self.default_priority_fee)
 
     def update_thresholds(self, category: str, red: float, yellow: float):
-        """Update thresholds for a category and save."""
         if category in self.thresholds:
             self.thresholds[category] = {"red": red, "yellow": yellow}
-            self.save()
+            # Fire and forget save
+            import asyncio
+            asyncio.create_task(self.save_to_db())
     
     def update_rpc(self, rpc_url: str):
-        """Update RPC URL and save."""
         self.rpc_url = rpc_url
-        self.save()
-    
-    def get_active_wallet(self) -> Dict[str, str]:
-        """Get the currently active wallet from Wallet Manager."""
-        from .helpers import load_wallets
-        wallets = load_wallets()
-        wallet = {}
-        
-        for w in wallets:
-            if w.get("active"):
-                wallet = w.copy()
-                break
-        
-        if not wallet and wallets:
-             wallet = wallets[0].copy()
-        
-        if wallet and not wallet.get("walletPublicKey") and wallet.get("privateKey"):
-            try:
-                from solders.keypair import Keypair
-                kp = Keypair.from_base58_string(wallet["privateKey"])
-                wallet["walletPublicKey"] = str(kp.pubkey())
-            except Exception:
-                pass
-                
-        return wallet
+        import asyncio
+        asyncio.create_task(self.save_to_db())
     
     def update_trading_defaults(self, slippage: float, priority_fee: float):
-        """Update trading defaults and save."""
         self.default_slippage = slippage
         self.default_priority_fee = priority_fee
-        self.save()
+        import asyncio
+        asyncio.create_task(self.save_to_db())
 
 # Global config instance
 config = Config()

@@ -58,14 +58,16 @@ class TradingClient:
             "publicKey": str(self.keypair.pubkey()),
             "action": action,
             "mint": mint,
-            "denominatedInSol": bool(denominated_in_sol),
-            "amount": amount, # Leave as is (can be float or "100%")
+            "denominatedInSol": "true" if denominated_in_sol else "false",
+            "amount": amount,
             "slippage": float(slippage),
-            "priorityFee": float(priority_fee),
-            "pool": pool
+            "priorityFee": float(priority_fee)
         }
         
-        headers = {}
+        if pool and pool != "auto":
+            request_data["pool"] = pool
+        
+        headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["api-key"] = self.api_key
         
@@ -80,15 +82,17 @@ class TradingClient:
                 if response.status_code == 200:
                     return response.content
                 else:
-                    error_msg = response.text if response.text else f"HTTP {response.status_code}"
+                    error_body = response.text
                     # Log failure details for debugging
                     with open("error.log", "a") as f:
                         import json
                         f.write(f"\n--- PumpPortal API Error {datetime.now()} ---\n")
+                        f.write(f"Status: {response.status_code}\n")
                         f.write(f"URL: {self.PUMPPORTAL_API_URL}\n")
+                        f.write(f"Headers: {headers}\n")
                         f.write(f"Payload: {json.dumps(request_data)}\n")
-                        f.write(f"Response: {error_msg}\n")
-                    raise Exception(f"PumpPortal API error: {error_msg}")
+                        f.write(f"Response Body: {error_body}\n")
+                    raise Exception(f"PumpPortal API error: {error_body}")
                     
         except Exception as e:
             # Catch timeouts and other connection issues

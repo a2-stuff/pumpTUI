@@ -4,8 +4,9 @@ from textual.widgets import Static, Button, Input, Label, DataTable
 from textual.widget import Widget
 from textual.screen import Screen, ModalScreen
 from textual.binding import Binding
-from ..helpers import save_env_var, get_env_var, load_wallets, save_wallet, delete_wallet, set_active_wallet
+from ..helpers import save_env_var, get_env_var, set_active_wallet # Keep active wallet helper for status updates if needed, but we'll reimplement
 from ..api import PumpPortalClient
+from ..database import db # Import DB
 import asyncio
 import os
 
@@ -59,23 +60,22 @@ class WalletView(Vertical):
         self.delete_active()
         
     def delete_active(self) -> None:
-        """Delete the wallet marked as active."""
+        asyncio.create_task(self._delete_active_task())
+
+    async def _delete_active_task(self):
         try:
-            wallets = load_wallets()
-            active_pub = None
-            for w in wallets:
-                if w.get("active"):
-                    active_pub = w.get("walletPublicKey")
-                    break
+            active_doc = await db.settings.find_one({"key": "active_wallet"})
+            active_pub = active_doc.get("value") if active_doc else None
             
             if not active_pub:
                  self.app.notify("No active wallet found to delete.", severity="warning")
                  return
             
-            delete_wallet(active_pub)
+            await db.wallets.delete_one({"walletPublicKey": active_pub})
+            await db.settings.delete_one({"key": "active_wallet"}) # Unset active
+            
             self.load_wallets_into_table()
             self.app.notify(f"Deleted active wallet: {active_pub[:8]}...", severity="information")
-            self.query_one("#status_msg", Static).update("Active wallet deleted.")
         except Exception as e:
             self.app.notify(f"Delete Error: {e}", severity="error")
 
@@ -96,11 +96,22 @@ class WalletView(Vertical):
              self.app.notify(f"WalletView Mount Error: {e}", severity="error")
 
     def load_wallets_into_table(self) -> None:
-        """Load wallets from json and populate table."""
+        """Load wallets from DB and populate table."""
+        asyncio.create_task(self._load_wallets_task())
+
+    async def _load_wallets_task(self):
         try:
+            # Wait for DB
+            for _ in range(10):
+                if db.connected: break
+                await asyncio.sleep(0.5)
+            
             table = self.query_one("#wallets_table", DataTable)
             table.clear()
-            wallets = load_wallets()
+            
+            wallets = await db.get_wallets()
+            active_key_doc = await db.settings.find_one({"key": "active_wallet"})
+            active_pub = active_key_doc.get("value") if active_key_doc else None
             
             for w in wallets:
                 pub = w.get("walletPublicKey", "Unknown")
@@ -108,22 +119,23 @@ class WalletView(Vertical):
                 
                 # Format timestamp
                 created_raw = w.get("created_at", "N/A")
-                created_str = created_raw
-                if isinstance(created_raw, (int, float)):
-                    from datetime import datetime
-                    created_str = datetime.fromtimestamp(created_raw).strftime("%Y-%m-%d %H:%M")
+                created_str = str(created_raw)
+                if hasattr(created_raw, "strftime"):
+                    created_str = created_raw.strftime("%Y-%m-%d %H:%M")
                 
-                txs = w.get("tx_count", "...")
+                txs = w.get("tx_count", "0")
 
-                is_active = w.get("active", False)
+                is_active = (pub == active_pub)
                 active_str = "[green][X][/]" if is_active else "[ ]"
                 
                 table.add_row(active_str, pub, str(balance), created_str, str(txs), key=pub)
                 
             self.check_all_balances()
         except Exception as e:
-            msg = self.query_one("#status_msg", Static)
-            msg.update(f"Load Error: {e}")
+            try:
+                msg = self.query_one("#status_msg", Static)
+                msg.update(f"Load Error: {e}")
+            except: pass
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn_generate":
@@ -211,10 +223,18 @@ class WalletView(Vertical):
             pass
 
     def _set_active_wallet_action(self, pub_key: str) -> None:
-        """Helper to set active wallet."""
-        set_active_wallet(pub_key)
+        asyncio.create_task(self._set_active_task(pub_key))
+
+    async def _set_active_task(self, pub_key: str):
+        await db.settings.update_one(
+             {"key": "active_wallet"},
+             {"$set": {"value": pub_key}},
+             upsert=True
+        )
         self.load_wallets_into_table()
-        self.query_one("#status_msg", Static).update(f"Active wallet set: {pub_key}")
+        try:
+            self.query_one("#status_msg", Static).update(f"Active wallet set: {pub_key}")
+        except: pass
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Handle row selection (Enter key) to set active wallet."""
@@ -234,10 +254,11 @@ class WalletView(Vertical):
         try:
             data = await self.api_client.create_wallet()
             if "walletPublicKey" in data:
-                data.pop("apiKey", None)
-                import time
-                data["created_at"] = time.time()
-                save_wallet(data)
+                # API usually gives raw privateKey, we use db.save_wallet which encrypts it
+                pk = data.get("privateKey")
+                pub = data.get("walletPublicKey")
+                
+                await db.save_wallet("Generated", pk, pub)
                 self.load_wallets_into_table()
                 self.query_one("#status_msg", Static).update("Wallet Generated!")
             else:
@@ -246,6 +267,9 @@ class WalletView(Vertical):
             self.query_one("#status_msg", Static).update(f"Error: {e}")
 
     def import_wallet(self) -> None:
+        asyncio.create_task(self._import_task())
+
+    async def _import_task(self):
         pk = self.query_one("#input_pk", Input).value
         pub = self.query_one("#input_pub", Input).value
         
@@ -253,14 +277,9 @@ class WalletView(Vertical):
             self.query_one("#status_msg", Static).update("Enter both Private and Public Keys.")
             return
 
-        import time
-        wallet_data = {
-            "walletPublicKey": pub.strip(), 
-            "privateKey": pk.strip(),
-            "created_at": time.time()
-        }
-        save_wallet(wallet_data)
+        await db.save_wallet("Imported", pk.strip(), pub.strip())
         self.load_wallets_into_table()
+        
         self.query_one("#input_pk", Input).value = ""
         self.query_one("#input_pub", Input).value = ""
         self.query_one("#status_msg", Static).update("Wallet Imported.")
@@ -269,13 +288,16 @@ class WalletView(Vertical):
 
     def check_all_balances(self) -> None:
         """Fetch balances via batch RPC and tx counts individually."""
-        wallets = load_wallets()
+        asyncio.create_task(self._balance_task())
+
+    async def _balance_task(self):
+        wallets = await db.get_wallets()
         pub_keys = [w.get("walletPublicKey") for w in wallets if w.get("walletPublicKey")]
         
         if not pub_keys:
             return
             
-        asyncio.create_task(self._process_batch_updates(pub_keys))
+        await self._process_batch_updates(pub_keys)
 
     async def _process_batch_updates(self, pub_keys: list[str]) -> None:
         try:

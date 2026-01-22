@@ -11,10 +11,11 @@ from textual.binding import Binding
 from textual.reactive import reactive
 from ..api import PumpPortalClient
 from ..helpers import get_env_var
-from .widgets import TokenTable, TokenDetail
+from .widgets import TokenTable, TokenDetail, VolumeTable, RunnersTable
 from .screens import SettingsView, InfoView, WalletTrackerView, QuitScreen, StartupScreen, ShutdownScreen, TradeModal
 from .wallet_screen import WalletView
 from ..dex_api import DexScreenerClient
+from ..database import db
 from rich.text import Text
 
 class SystemHeader(Container):
@@ -114,7 +115,7 @@ class PumpApp(App):
     BINDINGS = [
         Binding("q", "quit", "Quit", show=False),
         Binding("n", "switch_to_new", "New Tokens", show=False),
-        Binding("v", "switch_to_volume", "Volume", show=False),
+        # Binding("v", "switch_to_volume", "Volume", show=False), # Removed
         Binding("t", "switch_to_tracker", "Tracker", show=False),
         Binding("w", "switch_to_wallets", "Wallets", show=False),
         Binding("x", "switch_to_settings", "Settings", show=False),
@@ -156,13 +157,26 @@ class PumpApp(App):
         asyncio.create_task(self.update_rpc_latency())
         # Start the WebSocket stream background task
         asyncio.create_task(self.stream_tokens())
+        
+        # Monitor DB Status
+        self.set_interval(10.0, self.monitor_db_status)
+        
+        # Initial binding refresh
+        self.call_after_refresh(self.refresh_bindings)
 
         # Run loading animation
         asyncio.create_task(self.run_startup_animation(startup))
+        
+        # Connect to DB
+        asyncio.create_task(db.connect())
 
     async def run_startup_animation(self, startup_screen: StartupScreen):
         await startup_screen.start_loading()
         self.pop_screen()
+        
+        if hasattr(db, "connected") and db.connected:
+             from ..config import config
+             await config.load_from_db()
         
         # Check for missing configuration and notify
         from ..helpers import get_env_var
@@ -189,6 +203,13 @@ class PumpApp(App):
             self.rpc_latency = int((time.perf_counter() - start) * 1000)
         except:
             self.rpc_latency = -1 # Error state
+
+    async def monitor_db_status(self) -> None:
+        """Check DB connection and notify if down."""
+        if hasattr(db, "connected") and not db.connected:
+            self.notify("⚠️ Database Disconnected. History & Settings may act weird.", severity="error", timeout=5)
+            # Try reconnect?
+            asyncio.create_task(db.connect())
 
     async def update_market_prices(self) -> None:
         """Fetch and update SOL/BTC prices."""
@@ -233,21 +254,30 @@ class PumpApp(App):
                         show_trading = True
                 except:
                     pass
-            
-            if show_trading:
-                # Dynamically bind to force visibility
-                self.bind("b", "trade_token", description="Trade", show=True)
-                self.bind("c", "copy_ca", description="Copy CA", show=True)
-                self.bind("ctrl+shift+c", "copy_ca", show=False) # Alternate hidden hotkey
-            else:
-                # Remove from active bindings map to hide from footer
-                try:
-                    if "b" in self._bindings._map:
-                        self._bindings._map.pop("b")
-                    if "c" in self._bindings._map:
-                        self._bindings._map.pop("c")
-                except:
-                    pass
+                
+                # Sorting bindings
+                self.bind("m", "sort_new_mc", description="Sort MC", show=True)
+                self.bind("v", "sort_new_vol", description="Sort Vol", show=True)
+                self.bind("l", "sort_new_live", description="Live (Reset)", show=True)
+
+            # Clean up Runners bindings if not in trending
+            try:
+                if active_tab != "new":
+                     if "m" in self._bindings._map: self._bindings._map.pop("m")
+                     if "v" in self._bindings._map: self._bindings._map.pop("v")
+                     if "l" in self._bindings._map: self._bindings._map.pop("l")
+                     
+                # Handle Trading Bindings (Only in New Tokens if selected)
+                if show_trading:
+                    self.bind("b", "trade_token", description="Trade", show=True)
+                    self.bind("c", "copy_ca", description="Copy CA", show=True)
+                    self.bind("ctrl+shift+c", "copy_ca", show=False)
+                else:
+                    # Remove trading bindings if not applicable
+                    if "b" in self._bindings._map: self._bindings._map.pop("b")
+                    if "c" in self._bindings._map: self._bindings._map.pop("c")
+                    
+            except: pass
             
             try:
                 self.query_one(Footer).refresh()
@@ -323,10 +353,7 @@ class PumpApp(App):
         self.query_one(TabbedContent).active = "info"
         self.safe_focus(InfoView)
 
-    async def action_switch_to_volume(self) -> None:
-        """Switch to Volume/Trending tab."""
-        self.query_one(TabbedContent).active = "trending"
-        self.safe_focus("#table_trending")
+    # Removed action_switch_to_volume
 
     async def action_focus_search(self) -> None:
         """Switch to New Tokens tab and focus search."""
@@ -447,7 +474,7 @@ class PumpApp(App):
                     except Exception as e:
                         # Log specific event handling error but keep listening
                         with open("error.log", "a") as f:
-                            f.write(f"Event Handler Error: {e}\n{json.dumps(event)}\n")
+                            f.write(f"Event Handler Error: {e}\n{str(event)}\n")
 
             except Exception as e:
                 self.notify(f"Stream error: {e}. Reconnecting in {reconnect_delay}s...", severity="warning")
@@ -480,6 +507,10 @@ class PumpApp(App):
              if mint:
                  asyncio.create_task(self.api_client.subscribe_token_trade([mint]))
          
+         # 4. Update Database (Async / Fire-and-Forget)
+         if hasattr(db, "connected") and db.connected:
+             asyncio.create_task(db.update_token_event(event))
+         
          # 3. Update Detail View (if applicable)
          detail_view = self.query_one("#detail_view", TokenDetail)
          if detail_view.current_token:
@@ -497,6 +528,7 @@ class PumpApp(App):
 
     async def on_unmount(self):
         await self.api_client.close()
+        await db.close()
 
     def compose(self) -> ComposeResult:
         yield SystemHeader(title=self.TITLE)
@@ -512,8 +544,9 @@ class PumpApp(App):
                 yield WalletTrackerView()
             with TabPane("Wallets (w)", id="wallets"):
                  yield WalletView(id="wallet_view")
-            with TabPane("Volume (v)", id="trending"):
-                yield Placeholder("Trending view unavailable in this mode")
+            # Runners Tab Removed
+            # with TabPane("Runners (v)", id="trending"):
+            #    yield RunnersTable(id="table_trending")
             with TabPane("Settings (x)", id="settings"):
                 yield SettingsView()
             with TabPane("Info (i)", id="info"):
@@ -537,6 +570,8 @@ class PumpApp(App):
 
     def _handle_row_event(self, event: DataTable.RowSelected | DataTable.RowHighlighted) -> None:
         """Centralized handler for row interactions."""
+        # Update bindings since selection changed (toggles Trade button)
+        self.refresh_bindings()
         try:
             row_key = event.row_key.value
             table_widget = self.query_one("#table_new", TokenTable)
@@ -555,6 +590,26 @@ class PumpApp(App):
                  f.write(f"Selection Event Error: {e}\n")
 
 
+    async def action_sort_new_mc(self):
+        try:
+             # Sort by marketCapSol
+             self.query_one("#table_new", TokenTable).sort_data("marketCapSol", reverse=True)
+        except: pass
+
+    async def action_sort_new_vol(self):
+        try:
+             # Sort by volume_sol (implied need to track volume)
+             # Note: volume_sol might be 0 for new tokens.
+             self.query_one("#table_new", TokenTable).sort_data("volume_sol", reverse=True)
+        except: pass
+
+    async def action_sort_new_live(self):
+        try:
+             self.query_one("#table_new", TokenTable).reset_sort_live()
+        except: pass
+
+
+        
 if __name__ == "__main__":
     app = PumpApp()
     app.run()
