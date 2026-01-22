@@ -1,14 +1,15 @@
 # pumpTUI
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Version](https://img.shields.io/badge/version-1.1.4-orange.svg)
+![Version](https://img.shields.io/badge/version-1.1.6-orange.svg)
 ![Solana](https://img.shields.io/badge/Solana-Data%20Stream-black.svg?logo=solana)
 
 pumpTUI is a Terminal User Interface (TUI) application for viewing and tracking tokens on Pump.fun directly from your terminal. It provides real-time updates, detailed token information, and wallet tracking capabilities.
 
 ## Features
 
-- **Real-time Token Streaming**: View new tokens as they are created on Pump.fun.
+- **Self-Healing Token Stream**: Real-time websocket feed with automatic reconnection and error isolation.
+- **Real-time Token Discovery**: View new tokens as they are created on Pump.fun instantly.
 - **Detailed Token Info**: Select any token to view detailed statistics, including market cap, volume, and holder data.
 - **Crypto Ticker**: Live SOL and BTC prices in the footer ticker (Every 10s).
 - **USD Metrics**: Automatic conversion of Market Cap and Volume to **$USD** using live SOL prices.

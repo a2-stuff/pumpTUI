@@ -21,6 +21,9 @@ class TokenTable(Widget):
         self.table = DataTable(id="tokens_data_table")
         self.data_store: Dict[str, Dict[str, Any]] = {} # Store full token data
         self.column_keys = {} # Store ColumnKey objects
+        self._last_age_values: Dict[str, str] = {} # Performance: Cache age strings
+        self._render_throttle = 0.5 # Minimum s between full renders
+        self._last_full_render = 0.0
         
         # Pagination & Search
         self.history: List[Dict[str, Any]] = []
@@ -44,7 +47,7 @@ class TokenTable(Widget):
 
     def on_mount(self) -> None:
         self.table.cursor_type = "row"
-        cols = self.table.add_columns("Token CA", "Name", "Ticker", "MC ($)", "Tx", "Hold", "Age", "Buys", "Sells", "Vol ($)", "Dev")
+        cols = self.table.add_columns("Token CA", "Name", "Ticker", "MC ($)", "Tx", "Hold", "Buys", "Sells", "Vol ($)", "Dev", "Age")
         # Store MC column key specifically
         if len(cols) >= 4:
             self.column_keys["MC ($)"] = cols[3]
@@ -53,18 +56,19 @@ class TokenTable(Widget):
         if len(cols) >= 6:
             self.column_keys["Hold"] = cols[5]
         if len(cols) >= 7:
-            self.column_keys["Age"] = cols[6]
+            self.column_keys["Buys"] = cols[6]
         if len(cols) >= 8:
-            self.column_keys["Buys"] = cols[7]
+            self.column_keys["Sells"] = cols[7]
         if len(cols) >= 9:
-            self.column_keys["Sells"] = cols[8]
+            self.column_keys["Vol ($)"] = cols[8]
         if len(cols) >= 10:
-            self.column_keys["Vol ($)"] = cols[9]
+            self.column_keys["Dev"] = cols[9]
         if len(cols) >= 11:
-            self.column_keys["Dev"] = cols[10]
+            self.column_keys["Age"] = cols[10]
         
-        # Start Age Timer
+        # Timers
         self.set_interval(1.0, self._update_ages)
+        self.set_interval(0.5, self.on_timer)
         
         if self.fetch_method:
             self.load_data()
@@ -137,35 +141,53 @@ class TokenTable(Widget):
         
         for item in page_items:
             mint = item.get("mint")
+            if not mint: continue
+            
             created_ts = item.get("timestamp")
             
             age_str = "0s"
             if created_ts and isinstance(created_ts, (int, float)):
                 diff = int(now_ts - created_ts)
-                if diff < 60:
-                    age_str = f"{diff}s"
-                elif diff < 3600:
-                    m = diff // 60
-                    s = diff % 60
-                    age_str = f"{m}m {s}s"
-                else:
-                    h = diff // 3600
-                    m = (diff % 3600) // 60
-                    age_str = f"{h}h {m}m"
+                if diff < 60: age_str = f"{diff}s"
+                elif diff < 3600: age_str = f"{diff // 60}m {diff % 60}s"
+                else: age_str = f"{diff // 3600}h {(diff % 3600) // 60}m"
             
-            try:
-                self.table.update_cell(mint, age_col, age_str)
-            except Exception:
-                pass
+            # Optimization: Only update if the string actually changed
+            if self._last_age_values.get(mint) != age_str:
+                try:
+                    self.table.update_cell(mint, age_col, age_str)
+                    self._last_age_values[mint] = age_str
+                except:
+                    pass
         
-        # If there are pending new token renders, do it now (batching)
-        if hasattr(self, "_pending_updates") and self._pending_updates:
-            now = time.time()
-            if now - self._last_render_time >= 1.0:
-                self._last_render_time = now
-                self._pending_updates = False
-                self.render_page()
+
+    def _request_render(self) -> None:
+        """Throttle full renders to preserve CPU."""
+        if not self.table.is_mounted:
+            return
+            
+        try:
+            # Only render if we are on the active tab
+            if self.app.query_one("TabbedContent").active != "new":
+                self._pending_updates = True
+                return
+        except:
+             self._pending_updates = True
+             return
+
+        now = time.time()
+        if now - self._last_full_render > self._render_throttle:
+             self._last_full_render = now
+             self._pending_updates = False
+             self.render_page()
+        else:
+             self._pending_updates = True
     
+    def on_timer(self) -> None:
+        """Called by the background interval."""
+        if self._pending_updates:
+             self._request_render()
+
     def get_selected_token(self) -> Optional[Dict[str, Any]]:
         """Get the currently selected/highlighted token's data."""
         try:
@@ -417,29 +439,9 @@ class TokenTable(Widget):
                     should_render = False
 
             if should_render:
-                # Throttle rendering to max 1 per second to keep UI responsive
-                now = time.time()
-                if now - self._last_render_time < 1.0:
-                    self._pending_updates = True
-                    return
-                
-                self._last_render_time = now
-                self._pending_updates = False
-                
-                # Store cursor and scroll position
-                coord = self.table.cursor_coordinate
-                scroll_x, scroll_y = self.table.scroll_offset
-                
-                self.render_page()
-                
-                # Restore cursor (shifted by 1 if we added a row above)
-                if coord.row >= 0:
-                    try:
-                        new_row = coord.row + 1
-                        # Wait a bit or use call_later to ensure table has processed rows
-                        self.table.call_later(self._restore_table_state, new_row, coord.column, scroll_x, scroll_y)
-                    except:
-                        pass
+                self._request_render()
+            else:
+                self._pending_updates = True
 
     def _restore_table_state(self, row, col, scroll_x, scroll_y):
         """Helper to restore table state after re-render."""
@@ -452,10 +454,17 @@ class TokenTable(Widget):
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         """Update app bindings when cursor moves to show/hide contextual keys."""
-        try:
-            self.app.refresh_bindings()
-        except:
-            pass
+        # Performance: Throttle footer updates during rapid navigation
+        now = time.time()
+        if not hasattr(self, "_last_binding_refresh"):
+            self._last_binding_refresh = 0
+            
+        if now - self._last_binding_refresh > 0.1:
+            self._last_binding_refresh = now
+            try:
+                self.app.refresh_bindings()
+            except:
+                pass
             
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Handle double-click to open trade modal."""
@@ -471,9 +480,21 @@ class TokenTable(Widget):
             self._last_clicked_row = row_key
 
     def render_page(self):
+        """Render the current page from filtered history with cursor stability."""
+        if not self.table.is_mounted: return
 
-        """Render the current page from filtered history."""
+        # 1. Save state
+        saved_key = None
+        saved_row_idx = None
+        try:
+            if self.table.cursor_row >= 0:
+                 saved_key = self.table.get_cursor_row_key()
+                 saved_row_idx = self.table.cursor_row
+        except: pass
+        scroll_x, scroll_y = self.table.scroll_offset
+
         self.table.clear()
+        self._last_age_values.clear() # Reset cache on full re-render
         
         source_list = self.filtered_history
         
@@ -594,8 +615,26 @@ class TokenTable(Widget):
             else:
                 dev_str = "[red]HOLDING[/]"
 
-            self.table.add_row(display_mint, name, symbol, Text.from_markup(market_cap), Text.from_markup(tx_count), Text.from_markup(holders), age_str, Text.from_markup(buys_str), Text.from_markup(sells_str), Text.from_markup(vol_str), Text.from_markup(dev_str), key=mint)
+            self.table.add_row(display_mint, name, symbol, Text.from_markup(market_cap), Text.from_markup(tx_count), Text.from_markup(holders), Text.from_markup(buys_str), Text.from_markup(sells_str), Text.from_markup(vol_str), Text.from_markup(dev_str), age_str, key=mint)
         
+        # 3. Restore state (Robust)
+        if saved_key:
+            try:
+                # Try to find the exact token again
+                new_idx = self.table.get_row_index(saved_key)
+                self.table.move_cursor(row=new_idx, animate=False)
+            except:
+                # Fallback: maintain visual row position if token moved off page
+                if saved_row_idx is not None:
+                     target_row = min(saved_row_idx, self.table.row_count - 1)
+                     self.table.move_cursor(row=target_row, animate=False)
+        elif saved_row_idx is not None and self.table.row_count > 0:
+             # If no key was saved but we had a row (unlikely for DataTable but safe)
+             target_row = min(saved_row_idx, self.table.row_count - 1)
+             self.table.move_cursor(row=target_row, animate=False)
+
+        self.table.scroll_to(x=scroll_x, y=scroll_y, animate=False)
+
         # Update controls
         self.query_one("#page_label", Label).update(f"Page {self.current_page} (Total: {len(source_list)})")
         self.query_one("#btn_newer", Button).disabled = (self.current_page <= 1)

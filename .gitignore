@@ -24,3 +24,6 @@ dist/
 # Tokens
 tokensdb/
 tokensdb/*.csv
+
+# Skills
+skills/

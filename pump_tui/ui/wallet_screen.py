@@ -1,33 +1,43 @@
 from textual.app import ComposeResult
-from textual.containers import Vertical, Horizontal
+from textual.containers import Vertical, Horizontal, Container
 from textual.widgets import Static, Button, Input, Label, DataTable
 from textual.widget import Widget
 from textual.screen import Screen, ModalScreen
+from textual.binding import Binding
 from ..helpers import save_env_var, get_env_var, load_wallets, save_wallet, delete_wallet, set_active_wallet
 from ..api import PumpPortalClient
 import asyncio
+import os
 
 class WalletView(Vertical):
-    """Screen for managing multiple wallets."""
+    """Container for wallet management."""
+    
+    BINDINGS = [
+        Binding("g", "generate_new", "Generate New"),
+        Binding("r", "refresh_all", "Refresh All"),
+        Binding("c", "copy_address", "Copy Address"),
+        Binding("d", "delete_active", "Delete Active"),
+    ]
 
     def __init__(self, id: str = None):
-        super().__init__(id=id)
+        # Allow passing custom ID, but default to wallet_container for CSS
+        super().__init__(id=id or "wallet_container")
         self.api_client = PumpPortalClient()
-        self.wallets_table = DataTable()
+        self.column_keys = {}
+        self.selected_wallets = set() # Safety for legacy code
 
     def compose(self) -> ComposeResult:
         yield Static("Wallet Manager", classes="title")
             
-        # Action Bar
         with Horizontal(classes="wallet-actions"):
-            yield Button("Generate New", id="btn_generate", classes="compact-btn", variant="warning")
-            yield Button("Refresh All", id="btn_refresh", classes="compact-btn")
-            yield Button("Copy Address", id="btn_copy", classes="compact-btn")
-            yield Button("Delete Selected", id="btn_delete", classes="compact-btn", variant="error")
-        # Table
-        yield self.wallets_table
+            yield Button("Generate New [g]", id="btn_generate", classes="compact-btn", variant="warning")
+            yield Button("Refresh All [r]", id="btn_refresh", classes="compact-btn")
+            yield Button("Copy Address [c]", id="btn_copy", classes="compact-btn")
+            yield Button("Delete Active [d]", id="btn_delete", classes="compact-btn", variant="error")
+        
+        # Table with explicit ID for CSS targets
+        yield DataTable(id="wallets_table")
 
-        # Import Section
         with Horizontal(classes="import-area"):
             yield Input(placeholder="Private Key", password=True, id="input_pk", classes="input-pk")
             yield Input(placeholder="Public Key (Required)", id="input_pub", classes="input-pk")
@@ -35,36 +45,85 @@ class WalletView(Vertical):
             
         yield Static("", id="status_msg")
 
+    # Action Wrappers
+    def action_generate_new(self) -> None:
+        self.generate_wallet()
+        
+    def action_refresh_all(self) -> None:
+        self.check_all_balances()
+        
+    def action_copy_address(self) -> None:
+        asyncio.create_task(self.copy_selected_address())
+        
+    def action_delete_active(self) -> None:
+        self.delete_active()
+        
+    def delete_active(self) -> None:
+        """Delete the wallet marked as active."""
+        try:
+            wallets = load_wallets()
+            active_pub = None
+            for w in wallets:
+                if w.get("active"):
+                    active_pub = w.get("walletPublicKey")
+                    break
+            
+            if not active_pub:
+                 self.app.notify("No active wallet found to delete.", severity="warning")
+                 return
+            
+            delete_wallet(active_pub)
+            self.load_wallets_into_table()
+            self.app.notify(f"Deleted active wallet: {active_pub[:8]}...", severity="information")
+            self.query_one("#status_msg", Static).update("Active wallet deleted.")
+        except Exception as e:
+            self.app.notify(f"Delete Error: {e}", severity="error")
+
     def on_mount(self) -> None:
-        self.wallets_table.cursor_type = "row"
-        self.wallets_table.add_columns("Active", "Address", "Balance (SOL)", "Created", "Txs")
-        self.load_wallets_into_table()
+        try:
+            table = self.query_one("#wallets_table", DataTable)
+            table.cursor_type = "row"
+            cols = table.add_columns("Active", "Address", "Balance (SOL)", "Created", "Txs")
+            self.column_keys = {
+                "Active": cols[0],
+                "Address": cols[1],
+                "Balance (SOL)": cols[2],
+                "Created": cols[3],
+                "Txs": cols[4]
+            }
+            self.load_wallets_into_table()
+        except Exception as e:
+             self.app.notify(f"WalletView Mount Error: {e}", severity="error")
 
     def load_wallets_into_table(self) -> None:
         """Load wallets from json and populate table."""
-        self.wallets_table.clear()
-        wallets = load_wallets()
-        
-        for w in wallets:
-            pub = w.get("walletPublicKey", "Unknown")
-            balance = w.get("balance", "Check...")
+        try:
+            table = self.query_one("#wallets_table", DataTable)
+            table.clear()
+            wallets = load_wallets()
             
-            # Format timestamp
-            created_raw = w.get("created_at", "N/A")
-            created_str = created_raw
-            if isinstance(created_raw, (int, float)):
-                from datetime import datetime
-                created_str = datetime.fromtimestamp(created_raw).strftime("%Y-%m-%d %H:%M")
-            
-            txs = w.get("tx_count", "...")
+            for w in wallets:
+                pub = w.get("walletPublicKey", "Unknown")
+                balance = w.get("balance", "Check...")
+                
+                # Format timestamp
+                created_raw = w.get("created_at", "N/A")
+                created_str = created_raw
+                if isinstance(created_raw, (int, float)):
+                    from datetime import datetime
+                    created_str = datetime.fromtimestamp(created_raw).strftime("%Y-%m-%d %H:%M")
+                
+                txs = w.get("tx_count", "...")
 
-            is_active = w.get("active", False)
-            active_str = "[green][X][/]" if is_active else "[ ]"
-            
-            self.wallets_table.add_row(active_str, pub, str(balance), created_str, str(txs), key=pub)
-            
-        # Trigger balance check for all
-        self.check_all_balances()
+                is_active = w.get("active", False)
+                active_str = "[green][X][/]" if is_active else "[ ]"
+                
+                table.add_row(active_str, pub, str(balance), created_str, str(txs), key=pub)
+                
+            self.check_all_balances()
+        except Exception as e:
+            msg = self.query_one("#status_msg", Static)
+            msg.update(f"Load Error: {e}")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn_generate":
@@ -74,65 +133,96 @@ class WalletView(Vertical):
         elif event.button.id == "btn_refresh":
             self.check_all_balances()
         elif event.button.id == "btn_copy":
-            self.copy_selected_address()
+            asyncio.create_task(self.copy_selected_address())
         elif event.button.id == "btn_delete":
-            self.delete_selected()
-
-    def copy_selected_address(self) -> None:
-        """Copy the selected wallet's address to clipboard."""
+            self.delete_active()
+    
+    # ... copy methods ...
+    
+    async def copy_selected_address(self) -> None:
+        """Copy the selected wallet's address to clipboard without blocking."""
         try:
-            # Check for current row
-            if self.wallets_table.cursor_row < 0:
-                self.app.notify("Select a wallet row first by clicking it.", variant="warning")
+            table = self.query_one("#wallets_table", DataTable)
+            if table.cursor_row < 0:
+                self.app.notify("Select a wallet row first.", severity="warning")
                 return
                 
-            row_key = self.wallets_table.get_cursor_row_key()
-            if row_key:
-                pub_key = str(row_key.value)
-                
-                # Robust Copy Logic
-                success = False
-                try:
-                    import base64
-                    import sys
-                    encoded = base64.b64encode(pub_key.encode('utf-8')).decode('utf-8')
-                    sys.stdout.write(f"\033]52;c;{encoded}\a")
-                    sys.stdout.flush()
-                    success = True
-                except: pass
-                
-                if not success:
-                    try:
-                        import subprocess
-                        subprocess.run(['wl-copy'], input=pub_key.encode(), capture_output=True)
-                        success = True
-                    except: pass
-                
-                if not success:
-                    try:
-                        import subprocess
-                        subprocess.run(['pbcopy'], input=pub_key.encode(), capture_output=True)
-                        success = True
-                    except: pass
+            row_key = table.get_cursor_row_key()
+            if not row_key: return
+            pub_key = str(row_key.value).strip()
 
-                if success:
-                    self.app.notify(f"Address Copied: {pub_key[:8]}...", variant="success")
-                else:
-                    self.app.notify(f"Clipboard Error. Address: {pub_key}", timeout=10)
+            # Attempt all methods
+            success = await self._perform_copy(pub_key)
+
+            if success:
+                self.app.notify("Address Copied!", severity="information")
             else:
-                self.app.notify("Could not identify selected wallet key.", variant="error")
+                self.app.notify(f"Clipboard restricted. Address: {pub_key}", timeout=10)
         except Exception as e:
-            self.app.notify(f"Error copying address: {e}", variant="error")
+            self.app.notify(f"Copy Error: {e}", severity="error")
+
+    async def _perform_copy(self, text: str) -> bool:
+        """Centralized copy logic used by both app and wallet view."""
+        # Step 1: OSC 52
+        try:
+            import base64, sys
+            enc = base64.b64encode(text.encode()).decode()
+            # Try writing to sys.stdout and also the app console
+            # In Textual, app.console is the safer place
+            self.app.console.file.write(f"\033]52;c;{enc}\a")
+            self.app.console.file.flush()
+        except: pass
+
+        # Step 2: System commands
+        import os
+        targets = []
+        if os.getenv("WAYLAND_DISPLAY"): 
+            targets.append(['wl-copy'])
+        if os.getenv("DISPLAY"): 
+            targets.append(['xclip', '-selection', 'clipboard'])
+            targets.append(['xclip', '-selection', 'primary'])
+            targets.append(['xsel', '-ib'])
+        targets.append(['pbcopy'])
+
+        for cmd in targets:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL
+                )
+                await asyncio.wait_for(proc.communicate(input=text.encode()), timeout=1.0)
+                if proc.returncode == 0:
+                    return True
+            except: continue
+        return False
+
+    def on_data_table_cell_selected(self, event: DataTable.CellSelected) -> None:
+        """Handle cell clicks for active status."""
+        try:
+            row_key = event.row_key.value
+            col_index = event.coordinate.column
+            
+            # Column 0 is "Active"
+            if col_index == 0:
+                self._set_active_wallet_action(str(row_key))
+        except Exception:
+            pass
+
+    def _set_active_wallet_action(self, pub_key: str) -> None:
+        """Helper to set active wallet."""
+        set_active_wallet(pub_key)
+        self.load_wallets_into_table()
+        self.query_one("#status_msg", Static).update(f"Active wallet set: {pub_key}")
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        """Handle row selection to set active wallet."""
+        """Handle row selection (Enter key) to set active wallet."""
         try:
             row_key = event.row_key
             if row_key:
-                pub_key = row_key.value
-                set_active_wallet(str(pub_key))
-                self.load_wallets_into_table()
-                self.query_one("#status_msg", Static).update(f"Active wallet set: {pub_key}")
+                pub_key = str(row_key.value)
+                self._set_active_wallet_action(pub_key)
         except Exception:
             pass
 
@@ -144,9 +234,7 @@ class WalletView(Vertical):
         try:
             data = await self.api_client.create_wallet()
             if "walletPublicKey" in data:
-                # Remove apiKey from data before saving - we only want it in .env
                 data.pop("apiKey", None)
-                data["created_at"] = asyncio.get_event_loop().time() # Use real time if possible, but let's use time.time()
                 import time
                 data["created_at"] = time.time()
                 save_wallet(data)
@@ -177,46 +265,50 @@ class WalletView(Vertical):
         self.query_one("#input_pub", Input).value = ""
         self.query_one("#status_msg", Static).update("Wallet Imported.")
 
-    def delete_selected(self) -> None:
-        try:
-            if self.wallets_table.cursor_row < 0:
-                 self.app.notify("Select a wallet row first by clicking it.", variant="warning")
-                 return
-                 
-            row_key = self.wallets_table.get_cursor_row_key()
-            if row_key:
-                pub_key = str(row_key.value)
-                
-                # Show status before cleanup
-                self.query_one("#status_msg", Static).update(f"Deleting {pub_key[:8]}...")
-                
-                delete_wallet(pub_key)
-                self.load_wallets_into_table()
-                self.app.notify(f"Wallet Deleted: {pub_key[:8]}...", variant="success")
-                self.query_one("#status_msg", Static).update("Wallet Deleted.")
-            else:
-                self.app.notify("Could not identify selected wallet to delete.", variant="error")
-        except Exception as e:
-            self.app.notify(f"Error deleting wallet: {e}", variant="error")
+
 
     def check_all_balances(self) -> None:
+        """Fetch balances via batch RPC and tx counts individually."""
         wallets = load_wallets()
-        for w in wallets:
-            pub = w.get("walletPublicKey")
-            if pub:
-                asyncio.create_task(self._update_balance(pub))
+        pub_keys = [w.get("walletPublicKey") for w in wallets if w.get("walletPublicKey")]
+        
+        if not pub_keys:
+            return
+            
+        asyncio.create_task(self._process_batch_updates(pub_keys))
 
-    async def _update_balance(self, pub_key: str):
+    async def _process_batch_updates(self, pub_keys: list[str]) -> None:
         try:
-            # Update both balance and tx count
-            bal_task = self.api_client.get_sol_balance(pub_key)
-            tx_task = self.api_client.get_tx_count(pub_key)
+            # 1. Batch fetch balances (Optimized)
+            balances = await self.api_client.get_batch_balances(pub_keys)
             
-            bal, tx_count = await asyncio.gather(bal_task, tx_task)
+            # Update Table with Balances
+            table = self.query_one("#wallets_table", DataTable)
+            bal_col = self.column_keys.get("Balance (SOL)")
             
-            # Update UI
-            self.wallets_table.update_cell(pub_key, "Balance (SOL)", f"{bal:.4f}")
-            self.wallets_table.update_cell(pub_key, "Txs", str(tx_count))
-        except Exception:
-             self.wallets_table.update_cell(pub_key, "Balance (SOL)", "Error")
-             self.wallets_table.update_cell(pub_key, "Txs", "!")
+            if bal_col:
+                for pub, bal in balances.items():
+                    try: 
+                        table.update_cell(pub, bal_col, f"{bal:.4f}")
+                    except: pass
+            
+            # 2. Fetch Tx Counts (Still individual for now, but parallel)
+            # We can run these concurrently
+            tx_col = self.column_keys.get("Txs")
+            if tx_col:
+                async def _update_tx(pub):
+                    try:
+                        count = await self.api_client.get_tx_count(pub)
+                        try: table.update_cell(pub, tx_col, str(count))
+                        except: pass
+                    except: pass
+                
+                # Limit concurrency to avoid rate limits
+                # chunks of 5
+                chunk_size = 5
+                for i in range(0, len(pub_keys), chunk_size):
+                    chunk = pub_keys[i:i + chunk_size]
+                    await asyncio.gather(*[_update_tx(p) for p in chunk])
+                    
+        except Exception as e:
+            self.app.notify(f"Update error: {e}", severity="error")

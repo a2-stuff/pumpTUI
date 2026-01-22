@@ -85,6 +85,49 @@ class PumpPortalClient:
                 pass
             return 0.0
 
+    async def get_batch_balances(self, public_keys: list[str]) -> Dict[str, float]:
+        """Get SOL balances for multiple wallets in one RPC call."""
+        if not public_keys:
+            return {}
+            
+        import httpx
+        from .config import config
+        rpc_url = config.rpc_url
+        
+        # Build batch request
+        # JSON-RPC batch is an array of requests
+        batch_payload = []
+        for idx, pub in enumerate(public_keys):
+            batch_payload.append({
+                "jsonrpc": "2.0",
+                "id": idx,
+                "method": "getBalance",
+                "params": [pub]
+            })
+            
+        results = {}
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            try:
+                response = await client.post(rpc_url, json=batch_payload)
+                if response.status_code == 200:
+                    data = response.json()
+                    # data is a list of responses corresponding to requests
+                    if isinstance(data, list):
+                        for res in data:
+                            req_id = res.get("id")
+                            if req_id is not None and 0 <= req_id < len(public_keys):
+                                pub = public_keys[req_id]
+                                if "result" in res and "value" in res["result"]:
+                                    lamports = res["result"]["value"]
+                                    results[pub] = lamports / 1_000_000_000
+                                else:
+                                    results[pub] = 0.0
+            except Exception as e:
+                print(f"Batch balance error: {e}")
+                pass
+                
+        return results
+
     async def get_tx_count(self, public_key: str) -> int:
         """Get transaction count for a wallet."""
         import httpx

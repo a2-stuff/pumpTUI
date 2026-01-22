@@ -105,23 +105,21 @@ class SystemHeader(Container):
             )
             self.query_one("#header_stats", Label).update(Text.from_markup(stats_msg))
 
+
 class PumpApp(App):
     """A Textual app to view Pump.fun tokens."""
 
     TITLE = "pumpTUI v1.1.5"
     CSS_PATH = "styles.tcss"
     BINDINGS = [
-        Binding("q", "quit", "Quit"),
-        Binding("n", "switch_to_new", "New Tokens"),
-        Binding("b", "trade_token", "Trade"),
-        Binding("c", "copy_ca", "Copy CA"),
-        Binding("v", "switch_to_volume", "Volume"),
-        Binding("t", "switch_to_tracker", "Tracker"),
-        Binding("w", "switch_to_wallets", "Wallets"),
-        Binding("x", "switch_to_settings", "Settings"),
-        Binding("s", "focus_search", "Search"),
-        Binding("i", "switch_to_info", "Info"),
-        Binding("r", "refresh", "Refresh Data"),
+        Binding("q", "quit", "Quit", show=False),
+        Binding("n", "switch_to_new", "New Tokens", show=False),
+        Binding("v", "switch_to_volume", "Volume", show=False),
+        Binding("t", "switch_to_tracker", "Tracker", show=False),
+        Binding("w", "switch_to_wallets", "Wallets", show=False),
+        Binding("x", "switch_to_settings", "Settings", show=False),
+        Binding("s", "focus_search", "Search", show=False),
+        Binding("i", "switch_to_info", "Info", show=False),
     ]
     
     def safe_focus(self, selector: str, sub_selector: str = None) -> None:
@@ -195,18 +193,8 @@ class PumpApp(App):
     async def update_market_prices(self) -> None:
         """Fetch and update SOL/BTC prices."""
         try:
-            # log to a dedicated price log for clarity
-            with open("price_debug.log", "a") as f:
-                 f.write(f"--- Update cycle start {datetime.now()} ---\n")
-            
-            # Use a short timeout locally to avoid blocking
             sol = await self.dex_client.get_sol_price()
-            with open("price_debug.log", "a") as f:
-                 f.write(f"SOL fetch done: {sol}\n")
-                 
             btc = await self.dex_client.get_btc_price()
-            with open("price_debug.log", "a") as f:
-                 f.write(f"BTC fetch done: {btc}\n")
             
             if sol: self.sol_price = sol
             if btc: self.btc_price = btc
@@ -214,17 +202,9 @@ class PumpApp(App):
             # Update Price Ticker
             price_str = f" [blue]◎[/] ${self.sol_price:.2f}   [#fab387]₿[/] ${self.btc_price:,.0f} "
             self.query_one("#price_ticker", Static).update(Text.from_markup(price_str))
-            
-            # Also log to debug_stream for consistency
-            with open("debug_stream.log", "a") as f:
-                 f.write(f"Prices Updated: SOL {self.sol_price} | BTC {self.btc_price}\n")
-            
-            with open("price_debug.log", "a") as f:
-                 f.write(f"UI Update done: {price_str}\n")
-                 
-        except Exception as e:
-            with open("price_debug.log", "a") as f:
-                f.write(f"Price Update Error: {type(e).__name__}: {e}\n")
+        except Exception:
+            pass
+
 
     async def action_quit(self) -> None:
         """Show quit confirmation."""
@@ -235,36 +215,48 @@ class PumpApp(App):
         
         self.push_screen(QuitScreen(), check_quit)
 
-    def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
-        """Refresh footer when tab changes to show/hide contextual keys."""
+    async def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        """Handle tab changes to update hotkey visibility."""
         self.refresh_bindings()
 
-    def get_bindings(self) -> list[Binding]:
-        """Standard bindings with contextual visibility filter."""
-        # Get base bindings (class level)
-        base_bindings = super().get_bindings()
-        
+    def refresh_bindings(self) -> None:
+        """Update hotkey visibility based on state."""
         try:
             tab_content = self.query_one(TabbedContent)
             active_tab = tab_content.active
             
-            # Contextual check: only show B and C on "new" tab with a selection
+            show_trading = False
             if active_tab == "new":
                 try:
                     table_widget = self.query_one("#table_new", TokenTable)
-                    # Check if any row is selected/highlighted
-                    if table_widget.table.cursor_row < 0:
-                         return [b for b in base_bindings if b.key not in ("b", "c")]
+                    if table_widget.table.cursor_row >= 0:
+                        show_trading = True
                 except:
                     pass
+            
+            if show_trading:
+                # Dynamically bind to force visibility
+                self.bind("b", "trade_token", description="Trade", show=True)
+                self.bind("c", "copy_ca", description="Copy CA", show=True)
+                self.bind("ctrl+shift+c", "copy_ca", show=False) # Alternate hidden hotkey
             else:
-                # Not on New Tokens tab, hide B and C
-                return [b for b in base_bindings if b.key not in ("b", "c")]
+                # Remove from active bindings map to hide from footer
+                try:
+                    if "b" in self._bindings._map:
+                        self._bindings._map.pop("b")
+                    if "c" in self._bindings._map:
+                        self._bindings._map.pop("c")
+                except:
+                    pass
+            
+            try:
+                self.query_one(Footer).refresh()
+            except:
+                pass
                 
+            super().refresh_bindings()
         except:
-            pass
-        
-        return base_bindings
+             super().refresh_bindings()
 
     async def cleanup_and_exit(self) -> None:
         """Clean up resources and exit."""
@@ -323,8 +315,8 @@ class PumpApp(App):
 
     async def action_switch_to_wallets(self) -> None:
         """Switch to Wallets tab."""
-        self.query_one(TabbedContent).active = "wallet"
-        self.safe_focus(WalletView, DataTable)
+        self.query_one(TabbedContent).active = "wallets"
+        self.safe_focus(WalletView, "#wallets_table")
 
     async def action_switch_to_info(self) -> None:
         """Switch to Info tab."""
@@ -358,105 +350,116 @@ class PumpApp(App):
                     # Create data provider lambda for live updates
                     data_provider = lambda m: token_table.data_store.get(m)
                     
+                    
                     # Open trade modal
-                    await self.push_screen(TradeModal(selected_token, data_provider=data_provider))
+                    from .screens import TradeModal
+                    await self.push_screen(TradeModal(
+                        selected_token, 
+                        data_provider=data_provider
+                    ))
                 else:
-                    self.notify("No token selected. Focus the table and select a token first.", variant="warning")
+                    self.notify("No token selected. Focus the table and select a token first.", severity="warning")
             else:
                 self.notify("Trading is only available from New Tokens or Volume tabs.", severity="warning")
         except Exception as e:
-            self.notify(f"Error opening trade modal: {e}", variant="error")
+            self.notify(f"Error opening trade modal: {e}", severity="error")
 
     async def action_copy_ca(self) -> None:
-        """Copy the selected token's contract address to clipboard."""
+        """Copy the selected token's contract address to clipboard without blocking."""
         try:
-            active_tab = self.query_one(TabbedContent).active
-            if active_tab == "new":
-                table_id = "#table_new"
-                token_table = self.query_one(table_id, TokenTable)
+            tab_content = self.query_one(TabbedContent)
+            if tab_content.active == "new":
+                token_table = self.query_one("#table_new", TokenTable)
                 selected_token = token_table.get_selected_token()
                 
-                if selected_token:
-                    ca = selected_token.get("mint", "").strip()
-                    if ca:
-                        success = False
-                        
-                        # Method 1: OSC 52 Escape Sequence (Modern terminals / SSH / tmux)
-                        try:
-                            import base64
-                            import sys
-                            encoded_ca = base64.b64encode(ca.encode('utf-8')).decode('utf-8')
-                            # Write directly to the terminal's output stream
-                            sys.stdout.write(f"\033]52;c;{encoded_ca}\a")
-                            sys.stdout.flush()
-                            # We treat OSC 52 as a "maybe" success, they rarely report failure
-                            # but we'll still try other local methods to be sure
-                            success = True 
-                        except: pass
+                if not selected_token:
+                    self.notify("Select a token first.", variant="warning")
+                    return
 
-                        # Method 2: System Clipboard Managers
-                        import subprocess
-                        import os
-                        
-                        # Priority list: Wayland -> X11 -> macOS
-                        cmds = []
-                        if os.getenv("WAYLAND_DISPLAY"):
-                            cmds.append(['wl-copy'])
-                        if os.getenv("DISPLAY"):
-                            cmds.append(['xclip', '-selection', 'clipboard'])
-                            cmds.append(['xsel', '-ib'])
-                        cmds.append(['pbcopy']) # macOS
-                        
-                        for cmd in cmds:
-                            try:
-                                # Use run to wait for completion
-                                subprocess.run(cmd, input=ca.encode('utf-8'), check=True, capture_output=True)
-                                success = True
-                                break
-                            except:
-                                continue
+                ca = str(selected_token.get("mint", "")).strip()
+                if not ca: return
 
-                        if success:
-                            self.notify(f"Copied CA: {ca[:8]}...{ca[-4:]}", variant="success")
-                        else:
-                            # Total failure: Notify with the actual address so user can see it
-                            self.notify(f"Clipboard Error. CA: {ca}", timeout=15)
-                    else:
-                        self.notify("No Mint address found for this token.", variant="error")
+                # Step 1: OSC 52
+                try:
+                    import base64
+                    enc = base64.b64encode(ca.encode()).decode()
+                    self.console.file.write(f"\033]52;c;{enc}\a")
+                    self.console.file.flush()
+                except: pass
+
+                # Step 2: System commands (Async)
+                import os
+                targets = []
+                if os.getenv("WAYLAND_DISPLAY"): 
+                    targets.append(['wl-copy'])
+                if os.getenv("DISPLAY"): 
+                    targets.append(['xclip', '-selection', 'clipboard'])
+                    targets.append(['xclip', '-selection', 'primary'])
+                    targets.append(['xsel', '-ib'])
+                targets.append(['pbcopy'])
+
+                success = False
+                for cmd in targets:
+                    try:
+                        proc = await asyncio.create_subprocess_exec(
+                            *cmd,
+                            stdin=asyncio.subprocess.PIPE,
+                            stdout=asyncio.subprocess.DEVNULL,
+                            stderr=asyncio.subprocess.DEVNULL
+                        )
+                        await asyncio.wait_for(proc.communicate(input=ca.encode()), timeout=1.0)
+                        if proc.returncode == 0:
+                            success = True
+                            break
+                    except: continue
+
+                if success:
+                    self.notify(f"CA Copied: {ca[:8]}...", severity="information")
                 else:
-                    self.notify("No token selected to copy. Focus the table first.", variant="warning")
+                    self.notify(f"Clipboard restricted. CA: {ca}", timeout=10)
         except Exception as e:
-            self.notify(f"Error copying CA: {e}", variant="error")
+            self.notify(f"Copy Error: {e}", severity="error")
+
 
     async def stream_tokens(self) -> None:
-        """Listen to WS and update table."""
-        with open("debug_stream.log", "a") as f:
-            f.write("Stream started.\n")
-        
-        try:
-             # Subscribe to new tokens (single connection)
-             await self.api_client.subscribe_new_tokens()
-             self.notify("Connected to Stream.")
-             with open("debug_stream.log", "a") as f:
-                 f.write("Subscribed.\n")
-             
-             table = self.query_one("#table_new", TokenTable)
-             async for event in self.api_client.listen():
-                 if event:
-                     with open("debug_stream.log", "a") as f:
-                         f.write(f"Event: {json.dumps(event)}\n")
-                     
-                     # Filter out subscription confirmation messages
-                     if "message" in event and "Successfully subscribed" in event["message"]:
-                         continue
-                     
-                     # Handle event via helper
-                     self.handle_stream_event(event)
+        """Listen to WS and update table with reconnection logic."""
+        reconnect_delay = 1.0
+        while True:
+            try:
+                # 1. Connect and Subscribe
+                await self.api_client.connect()
+                await self.api_client.subscribe_new_tokens()
+                self.notify("Stream Connected", severity="information")
+                reconnect_delay = 1.0 # Reset delay on success
+                
+                # 2. Listen loop
+                async for event in self.api_client.listen():
+                    if not event:
+                        continue
+                    
+                    # Filter out subscription confirmation messages
+                    if "message" in event and "Successfully subscribed" in event["message"]:
+                        continue
+                    
+                    # Handle event via helper (Wrapped to protect the loop)
+                    try:
+                        self.handle_stream_event(event)
+                    except Exception as e:
+                        # Log specific event handling error but keep listening
+                        with open("error.log", "a") as f:
+                            f.write(f"Event Handler Error: {e}\n{json.dumps(event)}\n")
 
-        except Exception as e:
-            with open("debug_stream.log", "a") as f:
-                f.write(f"Error: {e}\n")
-            self.notify(f"Stream error: {e}", severity="error")
+            except Exception as e:
+                self.notify(f"Stream error: {e}. Reconnecting in {reconnect_delay}s...", severity="warning")
+                with open("error.log", "a") as f:
+                    f.write(f"Stream Loop Error: {e}\n")
+                
+                await asyncio.sleep(reconnect_delay)
+                reconnect_delay = min(reconnect_delay * 2, 60.0) # Exponential backoff
+            
+            # If listen exits normally (connection closed)
+            await asyncio.sleep(1.0)
+
 
     def handle_stream_event(self, event: dict) -> None:
          """Process a stream event synchronously to ensure order."""
@@ -498,22 +501,22 @@ class PumpApp(App):
     def compose(self) -> ComposeResult:
         yield SystemHeader(title=self.TITLE)
         with TabbedContent(initial="new"):
-            with TabPane("New Tokens", id="new"):
+            with TabPane("New Tokens (n)", id="new"):
                 # Split Container
                 with Container(classes="split-container"):
                     yield TokenTable(title="New Tokens", id="table_new")
                     yield TokenDetail(id="detail_view")
              
              # Other tabs (placeholders or settings)
-            with TabPane("Tracker", id="tracker"):
+            with TabPane("Tracker (t)", id="tracker"):
                 yield WalletTrackerView()
-            with TabPane("Wallets", id="wallet"):
-                yield WalletView(id="wallet_view")
-            with TabPane("Volume", id="trending"):
+            with TabPane("Wallets (w)", id="wallets"):
+                 yield WalletView(id="wallet_view")
+            with TabPane("Volume (v)", id="trending"):
                 yield Placeholder("Trending view unavailable in this mode")
-            with TabPane("Settings", id="settings"):
+            with TabPane("Settings (x)", id="settings"):
                 yield SettingsView()
-            with TabPane("Info", id="info"):
+            with TabPane("Info (i)", id="info"):
                 yield InfoView()
         
         # Custom Bottom Bar

@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.1.6] - 2026-01-21
+
+### Added
+- **Robust Connection Management**: 
+  - Implemented automatic WebSocket reconnection with exponential backoff for the token stream.
+  - Added "Stream Connected" and "Reconnecting..." notifications for better visibility of connection status.
+- **Enhanced Data Flow**:
+  - Isolated individual event handling to prevent single malformed messages from interrupting the data stream.
+  - Standardized JSON payloads for trade execution to ensure full compatibility with the PumpPortal API.
+- **Comprehensive Logging**:
+  - Detailed diagnostic logging in `error.log` for failed transaction creations, capturing full payload and response data.
+  - Redacted heavy debug logging to improve terminal disk I/O performance.
+
+### Fixed
+- **System Stability**: 
+  - Resolved UI freezes and the 100% CPU lock when opening the trade modal by optimizing list processing and render cycles.
+  - Fixed a common crash related to unmounted widgets during asynchronous balance updates.
+- **Trade Execution**: Fixed "Bad Request" errors when buying/selling tokens by ensuring correct data types (booleans/numbers) are sent to the PumpPortal API.
+
+### Removed
+- **Unstable Navigation**: Reverted the experimental token navigation (Prev/Next) in the Trade Modal to maintain application stability under high load.
+
+
 ## [v1.1.5] - 2026-01-21
 
 ### Added

@@ -1,4 +1,5 @@
 import httpx
+from datetime import datetime
 from typing import Dict, Any, Optional
 from solders.transaction import VersionedTransaction
 from solders.keypair import Keypair
@@ -12,15 +13,17 @@ class TradingClient:
     
     PUMPPORTAL_API_URL = "https://pumpportal.fun/api/trade-local"
     
-    def __init__(self, rpc_url: str, wallet_private_key: str):
+    def __init__(self, rpc_url: str, wallet_private_key: str, api_key: Optional[str] = None):
         """
         Initialize trading client.
         
         Args:
             rpc_url: Solana RPC endpoint URL
             wallet_private_key: Base58 encoded private key for signing transactions
+            api_key: Optional PumpPortal API key
         """
         self.rpc_url = rpc_url
+        self.api_key = api_key
         try:
             self.keypair = Keypair.from_base58_string(wallet_private_key)
         except Exception as e:
@@ -55,28 +58,44 @@ class TradingClient:
             "publicKey": str(self.keypair.pubkey()),
             "action": action,
             "mint": mint,
-            "amount": amount,
-            "denominatedInSol": str(denominated_in_sol).lower(),
-            "slippage": slippage,
-            "priorityFee": priority_fee,
+            "denominatedInSol": bool(denominated_in_sol),
+            "amount": amount, # Leave as is (can be float or "100%")
+            "slippage": float(slippage),
+            "priorityFee": float(priority_fee),
             "pool": pool
         }
+        
+        headers = {}
+        if self.api_key:
+            headers["api-key"] = self.api_key
         
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     self.PUMPPORTAL_API_URL,
-                    data=request_data
+                    json=request_data,
+                    headers=headers
                 )
                 
                 if response.status_code == 200:
                     return response.content
                 else:
                     error_msg = response.text if response.text else f"HTTP {response.status_code}"
+                    # Log failure details for debugging
+                    with open("error.log", "a") as f:
+                        import json
+                        f.write(f"\n--- PumpPortal API Error {datetime.now()} ---\n")
+                        f.write(f"URL: {self.PUMPPORTAL_API_URL}\n")
+                        f.write(f"Payload: {json.dumps(request_data)}\n")
+                        f.write(f"Response: {error_msg}\n")
                     raise Exception(f"PumpPortal API error: {error_msg}")
-        except httpx.TimeoutException:
-            raise Exception("Request timed out. Please try again.")
+                    
         except Exception as e:
+            # Catch timeouts and other connection issues
+            if "PumpPortal API error" not in str(e):
+                with open("error.log", "a") as f:
+                    f.write(f"\n--- Trade Creation Exception {datetime.now()} ---\n")
+                    f.write(f"Error: {e}\n")
             raise Exception(f"Failed to create transaction: {e}")
     
     async def send_transaction(self, serialized_tx: bytes) -> str:

@@ -2,11 +2,13 @@ from textual.widgets import Label, Input, Button, Markdown, Static
 from textual.containers import Vertical, Container, Horizontal, Grid
 from textual.screen import ModalScreen, Screen
 from textual.app import ComposeResult
-from typing import Dict, Any, Callable
+from textual.binding import Binding
 from typing import Dict, Any, Callable
 from rich.text import Text
 from datetime import datetime
 import traceback
+import httpx
+import asyncio
 
 from ..config import config
 
@@ -180,12 +182,23 @@ class QuitScreen(ModalScreen):
     }
     """
 
+    BINDINGS = [
+        Binding("y", "confirm", "Confirm"),
+        Binding("n", "cancel", "Cancel"),
+    ]
+
     def compose(self) -> ComposeResult:
         with Vertical(id="quit-dialog"):
             yield Label("Are you sure you want to quit?", id="quit-title")
             with Horizontal(id="quit-buttons"):
-                yield Button("Yes", variant="error", id="quit-yes")
-                yield Button("No", variant="primary", id="quit-no")
+                yield Button("Yes (y)", variant="error", id="quit-yes")
+                yield Button("No (n)", variant="primary", id="quit-no")
+
+    def action_confirm(self) -> None:
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "quit-yes":
@@ -232,12 +245,12 @@ class StartupScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Label(
-            "   ___                      _____ _   _ _____\n"
-            "  / _ \ _   _ _ __ ___  _ _|_   _| | | |_   _|\n"
-            " / /_)/| | | | '_ ` _ \| '_ \| | | | | | | |\n"
-            "/ ___/ | |_| | | | | | | |_) | | | |_| |_| |_\n"
-            "\/      \__,_|_| |_| |_| .__/|_|  \___/_____/\n"
-            "                       |_|                    ",
+            r"   ___                      _____ _   _ _____" + "\n"
+            r"  / _ \ _   _ _ __ ___  _ _|_   _| | | |_   _|" + "\n"
+            r" / /_)/| | | | '_ ` _ \| '_ \| | | | | | | |" + "\n"
+            r"/ ___/ | |_| | | | | | | |_) | | | |_| |_| |_" + "\n"
+            r"\/      \__,_|_| |_| |_| .__/|_|  \___/_____/" + "\n"
+            r"                       |_|                    ",
             classes="logo"
         )
         yield Label(self.loading_text, id="status")
@@ -394,10 +407,10 @@ class TradeModal(ModalScreen):
     """
     
     BINDINGS = [
-        ("e", "execute_trade", "Execute"),
-        ("c", "cancel_trade", "Cancel"),
-        ("b", "toggle_buy", "Buy Mode"),
-        ("s", "toggle_sell", "Sell Mode"),
+        Binding("e", "execute_trade", "Execute"),
+        Binding("c", "cancel_trade", "Cancel"),
+        Binding("b", "toggle_buy", "Buy Mode"),
+        Binding("s", "toggle_sell", "Sell Mode"),
     ]
     
     def __init__(self, token_data: Dict[str, Any], data_provider: Callable[[str], Dict[str, Any]] = None):
@@ -474,22 +487,31 @@ class TradeModal(ModalScreen):
             yield Label("", id="error_label")
             yield Label("", id="success_label")
             
+            # Wallet Balance
+            yield Label("Loading wallet...", id="wallet_balance")
+            
             # Action buttons
             with Horizontal(classes="action_buttons"):
                 yield Button("Execute Trade (e)", variant="success", id="execute_button", classes="action_button")
                 yield Button("Cancel (c)", variant="error", id="cancel_button", classes="action_button")
+
+
+
             
-            # Wallet Balance
-            yield Label("Loading wallet...", id="wallet_balance")
+
 
     def on_mount(self) -> None:
         """Start updates on mount."""
-        # Update estimation initially
-        self.update_estimation()
-        # Start real-time MC updates
-        self.update_mc_ticker = self.set_interval(1.0, self.update_market_stats)
-        # Fetch wallet balance
-        self.run_worker(self.fetch_wallet_balance())
+        try:
+            # Update estimation initially
+            self.update_estimation()
+            # Start real-time MC updates
+            self.update_mc_ticker = self.set_interval(1.0, self.update_market_stats)
+            # Fetch wallet balance
+            self.run_worker(self.fetch_wallet_balance())
+        except Exception as e:
+            self.app.notify(f"TradeModal Error: {e}", severity="error")
+
 
     def update_market_stats(self) -> None:
         """Update Market Cap with live SOL price."""
@@ -555,46 +577,44 @@ class TradeModal(ModalScreen):
 
     async def fetch_wallet_balance(self) -> None:
         """Fetch and display wallet SOL balance."""
-        if not self.active_wallet:
-             self.query_one("#wallet_balance", Label).update("No active wallet selected")
-             return
-        
-        pub_key = self.active_wallet.get("walletPublicKey")
-        if not pub_key:
-             self.query_one("#wallet_balance", Label).update("Invalid wallet data")
-             return
-
         try:
-            # Simple RPC call using the same logic as TradingClient
-            from ..trading import TradingClient
-            # Dummy key just for balance check if needed, but we used requests before.
-            # Using httpx directly is cleaner.
+            if not self.active_wallet:
+                if self.is_mounted: self.query_one("#wallet_balance", Label).update("No active wallet selected")
+                return
             
-            import httpx
+            pub_key = self.active_wallet.get("walletPublicKey")
+            if not pub_key:
+                if self.is_mounted: self.query_one("#wallet_balance", Label).update("Invalid wallet data")
+                return
+
+            
             payload = {
                 "jsonrpc": "2.0", "id": 1, "method": "getBalance",
                 "params": [pub_key]
             }
-            # Increased timeout to 10s as user reported issues
-            async with httpx.AsyncClient(timeout=10.0) as http_client:
+            async with httpx.AsyncClient(timeout=2.0) as http_client:
                 response = await http_client.post(config.rpc_url, json=payload)
+                if not self.is_mounted: return
+                
                 if response.status_code == 200:
-                    val = response.json().get("result", {}).get("value")
+                    data = response.json()
+                    if "error" in data:
+                        self.query_one("#wallet_balance", Label).update(f"RPC Error: {data['error'].get('message')}")
+                        return
+                        
+                    val = data.get("result", {}).get("value")
                     if val is not None:
                          bal_sol = val / 1_000_000_000
                          self.query_one("#wallet_balance", Label).update(f"Balance ({pub_key[:4]}..): {bal_sol:.4f} SOL")
                     else:
-                         self.query_one("#wallet_balance", Label).update("Balance: 0.00 SOL (Empty)")
+                         self.query_one("#wallet_balance", Label).update("Balance: 0.00 SOL")
                 else:
                     self.query_one("#wallet_balance", Label).update(f"Error HTTP {response.status_code}")
-        except ImportError:
-             self.query_one("#wallet_balance", Label).update("Error: 'solders' module missing?")
         except Exception as e:
-             # Clean up error message
-             err_str = str(e)
-             if "No module named" in err_str:
-                 err_str = "Error: Missing dependencies"
-             self.query_one("#wallet_balance", Label).update(f"Wallet Error: {err_str[:25]}")
+            if self.is_mounted:
+                self.query_one("#wallet_balance", Label).update(f"Conn Error: {str(e)[:20]}")
+
+
     
     def action_toggle_buy(self) -> None:
         """Switch to Buy mode."""
@@ -618,30 +638,21 @@ class TradeModal(ModalScreen):
         """Handle button presses."""
         if self.is_processing:
             return
+            
+        bid = event.button.id
+        if bid == "btn_buy":
+            self.action_toggle_buy()
+        elif bid == "btn_sell":
+            self.action_toggle_sell()
+        elif bid == "execute_button":
+            self.action_execute_trade()
+        elif bid == "cancel_button":
+            self.action_cancel_trade()
         
-        if event.button.id == "buy_button":
-            self.trade_mode = "buy"
-            self.query_one("#buy_button", Button).add_class("-active")
-            self.query_one("#sell_button", Button).remove_class("-active")
-            self.query_one("#amount_input", Input).value = "1.0"
-            self.query_one("#denom_label", Label).update("(SOL for buy)")
-            self.update_estimation()
+
         
-        elif event.button.id == "sell_button":
-            self.trade_mode = "sell"
-            self.query_one("#sell_button", Button).add_class("-active")
-            self.query_one("#buy_button", Button).remove_class("-active")
-            self.query_one("#amount_input", Input).value = "100%"
-            self.query_one("#denom_label", Label).update("(Tokens or % for sell)")
-            self.update_estimation()
-        
-        elif event.button.id == "cancel_button":
-            self.dismiss(None)
-        
-        elif event.button.id == "execute_button":
-            self.execute_trade()
     
-    def execute_trade(self):
+    def action_execute_trade(self):
         """Execute the trade asynchronously."""
         if self.is_processing:
             return
@@ -716,7 +727,8 @@ class TradeModal(ModalScreen):
             priv_key = self.active_wallet.get("privateKey")
             client = TradingClient(
                 rpc_url=config.rpc_url,
-                wallet_private_key=priv_key
+                wallet_private_key=priv_key,
+                api_key=getattr(self.app, "api_key", None)
             )
             
             # Execute trade
@@ -817,10 +829,7 @@ class TradeModal(ModalScreen):
         except Exception:
             pass
             
-    def action_execute_trade(self) -> None:
-        """Execute trade via keybind."""
-        self.execute_trade()
-        
+    
     def action_cancel_trade(self) -> None:
         """Cancel trade via keybind."""
         self.dismiss(None)

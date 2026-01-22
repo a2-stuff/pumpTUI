@@ -307,15 +307,16 @@ Markdown H1 {
 }
 
 /* Wallet Manager Layout */
-WalletView {
+WalletView, #wallet_view, #wallet_container {
     layout: vertical;
     width: 100%;
-    height: 100%;
+    height: 1fr;
+    background: #11111b;
 }
 
-#wallet_container {
-    height: 100%;
-    width: 100%;
+#wallet_view DataTable, #wallet_container DataTable, #wallets_table {
+    height: 1fr;
+    min-height: 10;
 }
 
 #status_msg {
