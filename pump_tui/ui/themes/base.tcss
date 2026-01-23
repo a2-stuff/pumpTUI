@@ -1,21 +1,15 @@
-/*
- * Dolphine Theme (Default)
- * Inspired by Dolphie - oceanic blue color palette
- * Created: 2026-01-22
- */
-
 /* Global Styles */
 Screen {
-    background: #11111b; /* Dark background */
-    color: #cdd6f4;
+    background: $background;
+    color: $foreground;
 }
 
 /* Header */
 Header {
     dock: top;
     height: 1;
-    background: #1e1e2e;
-    color: #89b4fa; /* Blueish */
+    background: $surface;
+    color: $primary;
     content-align: center middle;
     text-style: bold;
 }
@@ -25,15 +19,15 @@ Header {
 #bottom_bar {
     dock: bottom;
     height: 1;
-    background: #1e1e2e;
+    background: $surface;
     layout: horizontal;
 }
 
 Footer {
     width: 1fr;
     height: 1;
-    background: #1e1e2e;
-    color: #a6adc8;
+    background: $surface;
+    color: $secondary;
 }
 
 #price_ticker {
@@ -42,47 +36,47 @@ Footer {
     height: 1;
     content-align: right middle;
     padding: 0 1;
-    color: #cdd6f4;
+    color: $foreground;
     text-style: bold;
-    background: #1e1e2e;
+    background: $surface;
 }
 
 /* Tabs */
 TabbedContent {
     height: 1fr;
-    background: #11111b;
+    background: $background;
 }
 
 ContentSwitcher {
     height: 1fr;
-    background: #11111b;
+    background: $background;
 }
 
 TabPane {
     padding: 1;
-    background: #11111b;
+    background: $background;
 }
 
 Tabs {
-    background: #11111b;
+    background: $background;
     dock: top;
-    color: #a6adc8;
+    color: $secondary;
 }
 
 Tabs:focus .underline {
-    color: #89b4fa;
+    color: $primary;
 }
 
 Tab {
-    color: #a6adc8;
+    color: $secondary;
 }
 
 Tab:focus {
-    color: #89b4fa;
+    color: $primary;
 }
 
 Tab.-active {
-    color: #89b4fa;
+    color: $primary;
     text-style: bold;
 }
 
@@ -94,23 +88,23 @@ Tab.-active {
 .split-container {
     layout: horizontal;
     height: 1fr;
-    background: #181825;
-    border: tall #89b4fa;
+    background: $panel;
+    border: tall $primary;
 }
 
 #table_new {
     width: 66%;
     height: 1fr;
     border: none;
-    border-right: tall #89b4fa;
+    border-right: tall $primary;
 }
 
 #trade_panel_view {
     width: 34%;
     height: 1fr;
     padding: 0 1;
-    background: #181825;
-    color: #cdd6f4;
+    background: $panel;
+    color: $foreground;
 }
 
 #detail_layout {
@@ -129,8 +123,7 @@ Tab.-active {
 .image-container {
     width: 21;
     height: 10;
-    /* border: tall #89b4fa; Removed divider */
-    background: #11111b;
+    background: $background;
     dock: right;
     margin: 0 1 1 1;
 }
@@ -143,10 +136,10 @@ TokenTable {
 }
 
 DataTable {
-    background: #181825;
+    background: $panel;
     border: none;
-    scrollbar-background: #1e1e2e;
-    scrollbar-color: #89b4fa;
+    scrollbar-background: $surface;
+    scrollbar-color: $primary;
     height: 1fr;
 }
 
@@ -154,14 +147,14 @@ DataTable {
     height: 3;
     dock: bottom;
     align: center middle;
-    background: #1e1e2e;
+    background: $surface;
     padding: 0 1;
 }
 
 .pagination-controls Button {
     width: 16;
     margin: 0 1;
-    background: #313244;
+    background: $surface-lighten-1;
 }
 
 .pagination-controls Label {
@@ -169,18 +162,18 @@ DataTable {
     height: 1;
     content-align: center middle;
     text-style: bold;
-    color: #f9e2af;
+    color: $warning;
 }
 
 DataTable > .datatable--header {
-    background: #313244;
-    color: #89b4fa;
+    background: $surface-lighten-1;
+    color: $primary;
     text-style: bold;
 }
 
 DataTable > .datatable--cursor {
-    background: #89b4fa;
-    color: #1e1e2e;
+    background: $primary;
+    color: $surface;
     text-style: bold;
 }
 
@@ -188,9 +181,9 @@ DataTable > .datatable--cursor {
     dock: top;
     height: 3;
     padding: 0 1;
-    border: tall #1e1e2e;
-    background: #181825;
-    color: #cdd6f4;
+    border: tall $surface;
+    background: $panel;
+    color: $foreground;
 }
 
 .compact-btn {
@@ -199,33 +192,33 @@ DataTable > .datatable--cursor {
     padding: 0 1;
     margin: 0 1; 
     border: none;
-    background: #45475a; 
+    background: $surface-lighten-2; 
 }
 .compact-btn:hover {
-    background: #585b70;
+    background: $surface-lighten-3;
 }
 
 /* Settings & Info */
 .title {
     content-align: center middle;
     text-style: bold;
-    color: #f9e2af; /* Yellowish */
+    color: $warning;
     margin: 1;
 }
 
 Input {
-    border: tall #89b4fa;
-    background: #1e1e2e;
-    color: #cdd6f4;
+    border: tall $primary;
+    background: $surface;
+    color: $foreground;
 }
 
 Input:focus {
-    border: tall #a6e3a1; /* Green */
+    border: tall $success;
 }
 
 Button {
-    background: #89b4fa;
-    color: #1e1e2e;
+    background: $primary;
+    color: $surface;
     height: 1;
     min-width: 10;
     width: auto;
@@ -234,7 +227,7 @@ Button {
 }
 
 Button:hover {
-    background: #a6e3a1;
+    background: $success;
 }
 
 .pagination-controls Button {
@@ -242,24 +235,24 @@ Button:hover {
     min-width: 8;
     height: 1;
     margin: 0 1;
-    background: #313244;
-    color: #cdd6f4;
+    background: $surface-lighten-1;
+    color: $foreground;
 }
 
 .pagination-controls Button:hover {
-    background: #585b70; /* Brighter highlight */
+    background: $surface-lighten-2;
     color: #ffffff;
 }
 
 Markdown {
-    background: #181825;
+    background: $panel;
     padding: 2;
-    color: #cdd6f4;
+    color: $foreground;
 }
 
 Markdown H1 {
-    color: #89b4fa;
-    background: #11111b;
+    color: $primary;
+    background: $background;
 }
 
 .wallet-actions {
@@ -280,13 +273,13 @@ Markdown H1 {
 .setting-section {
     padding: 1;
     margin-bottom: 1;
-    background: #1e1e2e;
-    border: solid #313244;
+    background: $surface;
+    border: solid $surface-lighten-1;
 }
 
 .setting-title {
     text-style: bold;
-    color: #89b4fa;
+    color: $primary;
     margin-top: 1;
     margin-bottom: 0;
 }
@@ -303,17 +296,17 @@ Markdown H1 {
 
 .thresh-input Input {
     border: none;
-    background: #11111b;
+    background: $background;
 }
 
 .small-label {
-    color: #a6adc8;
+    color: $secondary;
     text-style: italic;
     margin-bottom: 0;
 }
 
 .info-text {
-    color: #9399b2;
+    color: $secondary;
     margin-top: 1;
     text-style: italic;
 }
@@ -323,7 +316,7 @@ WalletView, #wallet_view, #wallet_container {
     layout: vertical;
     width: 100%;
     height: 1fr;
-    background: #11111b;
+    background: $background;
 }
 
 #wallet_view DataTable, #wallet_container DataTable, #wallets_table {
@@ -334,7 +327,7 @@ WalletView, #wallet_view, #wallet_container {
 #status_msg {
     margin-top: 1;
     height: 1;
-    color: #a6adc8;
+    color: $secondary;
 }
 
 /* Trade Panel Specific Styles */
@@ -346,8 +339,8 @@ WalletView, #wallet_view, #wallet_container {
 
 #trade_panel_view .panel-header {
     text-style: bold;
-    color: #89b4fa;
-    background: #313244;
+    color: $primary;
+    background: $surface-lighten-1;
     width: 100%;
     content-align: center middle;
     height: 1;
@@ -355,17 +348,17 @@ WalletView, #wallet_view, #wallet_container {
 }
 
 #trade_panel_view .panel-info {
-    color: #a6adc8;
+    color: $secondary;
     height: 1;
     margin-bottom: 0;
 }
 
 .green {
-    color: #a6e3a1;
+    color: $success;
 }
 
 .red {
-    color: #f38ba8;
+    color: $error;
 }
 
 
@@ -397,17 +390,17 @@ WalletView, #wallet_view, #wallet_container {
     max-height: 8;
     margin-top: 1;
     padding: 0;
-    border-top: solid #313244;
+    border-top: solid $surface-lighten-1;
 }
 
 #trade_panel_view .info-box-header {
-    color: #89b4fa;
+    color: $primary;
     text-style: bold;
     height: 1;
 }
 
 #trade_panel_view .info-box-text {
-    color: #9399b2;
+    color: $secondary;
     height: auto;
     max-height: 3;
     width: 100%;
@@ -422,12 +415,12 @@ WalletView, #wallet_view, #wallet_container {
     width: 100%;
     margin-right: 0;
     margin-bottom: 0;
-    color: #89b4fa;
+    color: $primary;
 }
 
 #trade_panel_view #execute_button {
-    background: #a6e3a1;
-    color: #11111b;
+    background: $success;
+    color: $surface;
     text-style: bold;
     height: 1;
     width: 16;
@@ -459,12 +452,12 @@ WalletView, #wallet_view, #wallet_container {
 #trade_panel_view #amount_input {
     height: 1;
     border: none;
-    background: #1e1e2e;
+    background: $surface;
 }
 
 #trade_panel_view #sell_button {
-    background: #f38ba8;
-    color: #11111b;
+    background: $error;
+    color: $surface;
 }
 
 #trade_panel_view .button-row {
@@ -474,12 +467,12 @@ WalletView, #wallet_view, #wallet_container {
 }
 
 #trade_panel_view #error_label {
-    color: #f38ba8;
+    color: $error;
     height: 1;
 }
 
 #trade_panel_view #success_label {
-    color: #a6e3a1;
+    color: $success;
     height: 1;
 }
 
@@ -500,19 +493,19 @@ WalletView, #wallet_view, #wallet_container {
     min-width: 10;
     margin: 0 1;
     border: none;
-    background: #313244;
-    color: #a6adc8;
+    background: $surface-lighten-1;
+    color: $secondary;
 }
 
 #trade_panel_view Button#buy_button.-active {
-    background: #a6e3a1; /* Green active */
-    color: #11111b;
+    background: $success;
+    color: $surface;
     text-style: bold;
 }
 
 #trade_panel_view Button#sell_button.-active {
-    background: #f38ba8; /* Red active */
-    color: #11111b;
+    background: $error;
+    color: $surface;
     text-style: bold;
 }
 
@@ -525,6 +518,6 @@ WalletView, #wallet_view, #wallet_container {
     height: auto;
     margin: 0;
     padding: 0 1;
-    border: tall #89b4fa; /* Primary blue border */
-    background: #181825;
+    border: tall $primary;
+    background: $panel;
 }

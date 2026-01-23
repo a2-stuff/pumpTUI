@@ -5,7 +5,41 @@ import csv
 import os
 from datetime import datetime
 from textual.app import App, ComposeResult
+from textual.theme import Theme
 from textual.widgets import Header, Footer, TabbedContent, TabPane, Placeholder, DataTable, Label, Static
+
+# Define custom themes for Textual Palette (Ctrl+P)
+MODERN_DOLPHINE = Theme(
+    name="dolphine",
+    dark=True,
+    primary="#89b4fa",
+    secondary="#cba6f7",
+    accent="#f5c2e7",
+    foreground="#cdd6f4",
+    background="#11111b",
+    surface="#1e1e2e",
+    panel="#181825",
+    success="#a6e3a1",
+    error="#f38ba8",
+    warning="#fab387",
+)
+
+MATRIX_CYBER = Theme(
+    name="cyber",
+    dark=True,
+    primary="#00ff41",
+    secondary="#008f11",
+    accent="#00ff41",
+    foreground="#00ff41",
+    background="#000000",
+    surface="#0d0d0d",
+    panel="#000000",
+    success="#00ff41",
+    error="#ff003c",
+    warning="#f2ff00",
+)
+
+class SystemHeader(Container):
 from textual.containers import Container
 from textual.binding import Binding
 from textual.reactive import reactive
@@ -27,8 +61,8 @@ class SystemHeader(Container):
         layout: horizontal;
         height: 1;
         dock: top;
-        background: #1e1e2e;
-        color: #89b4fa;
+        background: $surface;
+        color: $primary;
         margin-bottom: 1;
     }
     .header-title {
@@ -40,7 +74,7 @@ class SystemHeader(Container):
         content-align: right middle;
         padding-right: 1;
         width: auto;
-        color: #a6adc8;
+        color: $secondary;
     }
     """
 
@@ -123,11 +157,11 @@ class PumpApp(App):
     """A Textual app to view Pump.fun tokens."""
 
     TITLE = "pumpTUI v1.1.8"
-    CSS_PATH = config.THEMES.get(config.current_theme, "styles.tcss")
+    CSS_PATH = "themes/base.tcss"
+    
     BINDINGS = [
         Binding("q", "quit", "Quit", show=False),
         Binding("n", "switch_to_new", "New Tokens", show=False),
-        # Binding("v", "switch_to_volume", "Volume", show=False), # Removed
         Binding("t", "switch_to_tracker", "Tracker", show=False),
         Binding("w", "switch_to_wallets", "Wallets", show=False),
         Binding("x", "switch_to_settings", "Settings", show=False),
@@ -153,6 +187,14 @@ class PumpApp(App):
 
     def __init__(self):
         super().__init__()
+        # Register themes for built-in switcher (Ctrl+P)
+        self.register_theme(MODERN_DOLPHINE)
+        self.register_theme(MATRIX_CYBER)
+        
+        # Set the initial theme from config
+        theme_map = {"Dolphine": "dolphine", "Cyber": "cyber"}
+        self.theme = theme_map.get(config.current_theme, "dolphine")
+        
         # User provided key strictly from .env
         self.api_key = get_env_var("API_KEY") or ""
         self.api_client = PumpPortalClient(api_key=self.api_key)

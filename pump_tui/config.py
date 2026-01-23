@@ -13,11 +13,6 @@ class Config:
         "holders": {"red": 20.0, "yellow": 50.0},
         "vol": {"red": 5000.0, "yellow": 15000.0}
     }
-    
-    THEMES = {
-        "Dolphine": "themes/dolphine.tcss",
-        "Cyber": "themes/cyber.tcss"
-    }
 
     def __init__(self):
         self.thresholds = self.DEFAULT_THRESHOLDS.copy()
@@ -54,7 +49,7 @@ class Config:
 
             # Load Theme
             theme = await db.get_setting("current_theme")
-            if theme in self.THEMES:
+            if theme in ["Dolphine", "Cyber"]:
                 self.current_theme = theme
             
         except Exception:

@@ -1,5 +1,5 @@
 from textual.widgets import Label, Input, Button, Markdown, Static, Select
-from textual.containers import Vertical, Container, Horizontal, Grid
+from textual.containers import Vertical, Container, Horizontal, Grid, VerticalScroll
 from textual.screen import ModalScreen, Screen
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -13,7 +13,7 @@ import asyncio
 
 from ..config import config
 
-class SettingsView(Container):
+class SettingsView(VerticalScroll):
     can_focus = True
     def compose(self) -> ComposeResult:
         yield Label("Settings", classes="title")
@@ -53,12 +53,21 @@ class SettingsView(Container):
             classes="setting-row"
         )
         
+        # Volume Thresholds
+        vol = config.thresholds["vol"]
+        yield Label("Volume ($) Thresholds", classes="setting-title")
+        yield Horizontal(
+            Vertical(Label("Red <", classes="small-label"), Input(value=str(vol["red"]), id="vol_red"), classes="thresh-input"),
+            Vertical(Label("Yellow <", classes="small-label"), Input(value=str(vol["yellow"]), id="vol_yellow"), classes="thresh-input"),
+            classes="setting-row"
+        )
+        
         yield Button("Save Coloring Layout", variant="success", id="save_colors")
         yield Static("Above 'Yellow <' value will be Green.", classes="info-text")
         
         # Theme Section
         yield Label("Application Theme", classes="setting-title")
-        theme_options = [(name, name) for name in config.THEMES.keys()]
+        theme_options = [("Dolphine", "Dolphine"), ("Cyber", "Cyber")]
         yield Select(options=theme_options, value=config.current_theme, id="theme_select")
         yield Button("Save Theme", variant="primary", id="save_theme")
 
@@ -107,6 +116,11 @@ class SettingsView(Container):
                     float(self.query_one("#holders_red", Input).value),
                     float(self.query_one("#holders_yellow", Input).value)
                 )
+                # Update Volume
+                config.update_thresholds("vol", 
+                    float(self.query_one("#vol_red", Input).value),
+                    float(self.query_one("#vol_yellow", Input).value)
+                )
                 self.app.notify("Coloring thresholds saved!")
             except ValueError:
                 self.app.notify("Error: Please enter valid numbers.", variant="error")
@@ -124,7 +138,12 @@ class SettingsView(Container):
             if theme:
                 config.current_theme = theme
                 asyncio.create_task(config.save_to_db())
-                self.app.notify(f"Theme set to {theme}. Restart required to apply.", severity="warning")
+                
+                # Instant switch using Textual's theme API
+                theme_map = {"Dolphine": "dolphine", "Cyber": "cyber"}
+                self.app.theme = theme_map.get(theme, "dolphine")
+                
+                self.app.notify(f"Theme switched to {theme}!")
 
         elif event.button.id == "save_trading_defaults":
             try:
@@ -141,7 +160,7 @@ class InfoView(Container):
 # PumpTUI
 **A Textual TUI for Pump.fun**
 
-Version: 1.1.7
+Version: 1.1.8
 Created by: @not_jarod
 
 ## Features
