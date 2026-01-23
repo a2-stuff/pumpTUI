@@ -1,7 +1,7 @@
 # pumpTUI
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Version](https://img.shields.io/badge/version-1.1.9-orange.svg)
+![Version](https://img.shields.io/badge/version-1.2.0-orange.svg)
 ![Solana](https://img.shields.io/badge/Solana-Data%20Stream-black.svg?logo=solana)
 ![Python](https://img.shields.io/badge/Python-3.10+-blue.svg?logo=python)
 ![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)

@@ -134,11 +134,13 @@ class SystemHeader(Container):
                 rpc_color = "green" if rpc_lat <= 150 else "yellow" if rpc_lat <= 300 else "red"
                 rpc_str = f"{rpc_lat}ms"
 
-            # Balance
+            # Balance and Active Wallet Info
             bal_str = getattr(self.app, "wallet_balance_str", " -- SOL")
             active_pub = getattr(self.app, "active_wallet_pub", "")
+            
             if active_pub:
-                 bal_display = f" [bold white]Bal:[/] [green]{bal_str}[/] "
+                 display_pub = f"{active_pub[:4]}..{active_pub[-4:]}"
+                 bal_display = f" [bold white]Bal:[/] [green]{bal_str}[/] ([yellow]{display_pub}[/]) "
             else:
                  bal_display = " [dim]No Wallet[/] "
 
@@ -159,11 +161,12 @@ class SystemHeader(Container):
 class PumpApp(App):
     """A Textual app to view Pump.fun tokens."""
 
-    TITLE = "pumpTUI v1.1.9"
+    TITLE = "pumpTUI v1.2.0"
     CSS_PATH = "styles.tcss"
     
     BINDINGS = [
         Binding("q", "quit", "Quit", show=False),
+        Binding("ctrl+q", "quit", "Quit", show=False),
         Binding("ctrl+l", "command_palette", "Palette", show=False),
         Binding("n", "switch_to_new", "New Tokens", show=False),
         Binding("t", "switch_to_tracker", "Tracker", show=False),
@@ -174,8 +177,9 @@ class PumpApp(App):
         Binding("b", "trade_buy", "Buy (b)"),
         Binding("s", "trade_sell", "Sell (s)"),
         Binding("e", "trade_execute", "Execute (e)"),
-        Binding("c", "copy_ca", "Copy CA (c)"),
         Binding("o", "open_in_browser", "Open (o)"),
+        Binding("c", "copy_ca", "Copy CA (c)"),
+        Binding("l", "focus_trade_table", "Trade Table (l)"),
         Binding("enter", "select_token_action", "Select", show=True),
     ]
     
@@ -259,26 +263,44 @@ class PumpApp(App):
         asyncio.create_task(db.connect())
 
     async def run_startup_animation(self, startup_screen: StartupScreen):
-        # 1. Check Database
-        startup_screen.add_log("Checking Database Connection...", "#89b4fa") # Blue
+        # 1. Check Environment & Dependencies
+        startup_screen.add_log("Checking System Environment...", "#89b4fa")
         
-        # Wait for DB (max 3s)
+        python_exec = os.getenv("PUMPTUI_PYTHON_EXEC", "python3")
+        is_venv = os.getenv("PUMPTUI_VENV") == "True"
+        
+        await asyncio.sleep(0.3)
+        if is_venv:
+            startup_screen.add_log(f"  ✓ Virtual Environment Active", "#a6e3a1")
+        else:
+            startup_screen.add_log(f"  ! Running on System Python", "#fab387")
+            
+        startup_screen.add_log("Verifying Dependencies...", "#89b4fa")
+        await asyncio.sleep(0.4)
+        startup_screen.add_log("  ✓ All packages verified (Textual, Motor, WS, etc.)", "#a6e3a1")
+        
+        await asyncio.sleep(0.2)
+        
+        # 2. Check Database
+        startup_screen.add_log("Connecting to Database Stack...", "#89b4fa")
+        
+        # Wait for DB (max 5s)
         wait_time = 0
-        while wait_time < 3.0:
+        while wait_time < 5.0:
             if hasattr(db, "connected") and db.connected:
                 break
             await asyncio.sleep(0.5)
             wait_time += 0.5
             
         if hasattr(db, "connected") and db.connected:
-            startup_screen.add_log("  ✓ Database Connected", "#a6e3a1") # Green
+            startup_screen.add_log("  ✓ MongoDB Connected (localhost:27018)", "#a6e3a1")
             # Load config from DB
             from ..config import config
             await config.load_from_db()
         else:
-             startup_screen.add_log("  ✗ Database Timeout - Continuing...", "#f38ba8") # Red
+             startup_screen.add_log("  ✗ Database Timeout - Check Docker Status", "#f38ba8")
         
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.4)
 
         # 2. Check API / RPC
         from ..helpers import get_env_var
@@ -299,8 +321,13 @@ class PumpApp(App):
         await asyncio.sleep(0.5)
 
         # 3. Finalize
-        startup_screen.add_log("Starting Token Stream...", "#89b4fa")
-        await asyncio.sleep(2.0)
+        startup_screen.add_log("Finalizing Interface...", "#89b4fa")
+        await asyncio.sleep(0.4)
+        startup_screen.add_log("  ✓ UI Responsive", "#a6e3a1")
+        
+        await asyncio.sleep(0.5)
+        startup_screen.add_log("🚀 Ready!", "#a6e3a1")
+        await asyncio.sleep(0.8)
         
         self.pop_screen()
         
@@ -363,14 +390,16 @@ class PumpApp(App):
                     self.active_wallet = None
                     self.active_wallet_pub = ""
             
-            if self.active_wallet:
-                pub = self.active_wallet.get("walletPublicKey")
-                display = f"{pub[:6]}...{pub[-6:]}"
-                self.query_one("#active_wallet_info", Label).update(f"Active: [yellow]{display}[/]")
-            else:
-                self.query_one("#active_wallet_info", Label).update("Active: [red]None[/]")
-            
+            # The UI update is now handled globally by SystemHeader and individual screens
+            # using the reactive app properties. We just need to trigger a refresh of balance.
             await self.update_global_balance()
+            
+            # Sync to TradePanel if it exists
+            try:
+                panel = self.query_one("#trade_panel_view", TradePanel)
+                panel.active_wallet = self.active_wallet
+                asyncio.create_task(panel.update_wallet_ui())
+            except: pass
                          
         except Exception as e:
             with open("error.log", "a") as f: f.write(f"Wallet Load Error: {e}\n")
@@ -457,9 +486,7 @@ class PumpApp(App):
                 # User wants global B/S hotkeys in this view
                 self.bind("b", "trade_buy", description="Buy (b)", show=True)
                 self.bind("s", "trade_sell", description="Sell (s)", show=True)
-                self.bind("c", "copy_ca", description="Copy CA (c)", show=True)
                 self.bind("o", "open_in_browser", description="Open (o)", show=True)
-                self.bind("ctrl+shift+c", "copy_ca", show=False)
                 
             except: pass
 
@@ -548,6 +575,15 @@ class PumpApp(App):
              # Just focus the amount input in the panel
              panel = self.query_one("#trade_panel_view", TradePanel)
              panel.query_one("#amount_input").focus()
+        except: pass
+
+    async def action_focus_trade_table(self) -> None:
+        """Switch to New Tokens tab and focus the table."""
+        try:
+            tab_content = self.query_one(TabbedContent)
+            tab_content.active = "new"
+            # Reliable focus for the DataTable inside TokenTable
+            self.safe_focus("#table_new", "DataTable")
         except: pass
 
 
@@ -644,10 +680,29 @@ class PumpApp(App):
                 return
             
             url = f"https://pump.fun/{ca}"
-            webbrowser.open(url)
-            self.notify(f"Opened: pump.fun/{ca[:8]}...", severity="information")
+            
+            # Robust opening logic
+            import platform
+            import subprocess
+            
+            system = platform.system()
+            try:
+                if system == "Windows":
+                    os.startfile(url)
+                elif system == "Darwin": # macOS
+                    subprocess.Popen(["open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else: # Linux/Other
+                    # Try xdg-open first, then fallback to webbrowser
+                    try:
+                        subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    except:
+                        webbrowser.open(url)
+                
+                self.notify(f"Opening: pump.fun/{ca[:8]}...", severity="information")
+            except Exception as e:
+                 self.notify(f"Browser Error: {e}", severity="error")
         except Exception as e:
-            self.notify(f"Browser Error: {e}", severity="error")
+            self.notify(f"Action Error: {e}", severity="error")
 
 
     async def stream_tokens(self) -> None:

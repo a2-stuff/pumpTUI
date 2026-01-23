@@ -280,20 +280,22 @@ class Database:
             wallet_data = {
                 "label": label,
                 "privateKey": enc_pk, # Encrypted
-                "walletPublicKey": public_key,
-                "created_at": datetime.now()
+                "walletPublicKey": public_key
             }
             # Assuming label is unique or we use pubkey as ID? 
             # Let's use pubkey as unique ID
             await self.wallets.update_one(
                 {"walletPublicKey": public_key},
-                {"$set": wallet_data},
+                {
+                    "$set": wallet_data,
+                    "$setOnInsert": {"created_at": datetime.now()}
+                },
                 upsert=True
             )
         except Exception as e:
             logging.error(f"Save Wallet Error: {e}")
 
-    async def get_wallets(self) -> List[Dict[str, str]]:
+    async def get_wallets(self) -> List[Dict[str, Any]]:
         """Get all wallets, decrypting private keys."""
         if not self.connected: return []
         try:
@@ -302,19 +304,22 @@ class Database:
             cipher = self._get_cipher()
             
             async for doc in cursor:
-                # Decrypt
+                # Start with all fields
+                wallet = dict(doc)
+                
+                # Handle decryption
                 pk = doc.get("privateKey")
                 if cipher and pk:
                     try:
                         pk = cipher.decrypt(pk.encode()).decode()
+                        wallet["privateKey"] = pk
                     except:
-                        pk = None # corrupt or wrong key
+                        wallet["privateKey"] = None # corrupt or wrong key
                 
-                wallets.append({
-                    "label": doc.get("label", "Unknown"),
-                    "privateKey": pk,
-                    "walletPublicKey": doc.get("walletPublicKey")
-                })
+                # Ensure _id is removed (not JSON serializable usually or just unneeded)
+                if "_id" in wallet: del wallet["_id"]
+                
+                wallets.append(wallet)
             return wallets
         except Exception as e:
             logging.error(f"Get Wallets Error: {e}")

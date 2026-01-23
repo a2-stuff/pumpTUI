@@ -480,6 +480,12 @@ WalletView, #wallet_view, #wallet_container {
     height: 1;
 }
 
+#estimated_amount {
+    width: 100%;
+    content-align: center middle;
+    color: $secondary;
+}
+
 /* Overrides for specificity and fixes */
 #trade_panel_view .trade_buttons {
     height: 1;

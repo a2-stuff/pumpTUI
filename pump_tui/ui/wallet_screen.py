@@ -75,6 +75,11 @@ class WalletView(Vertical):
             await db.settings.delete_one({"key": "active_wallet"}) # Unset active
             
             self.load_wallets_into_table()
+            
+            # Refresh global state
+            if hasattr(self.app, "load_global_wallet"):
+                asyncio.create_task(self.app.load_global_wallet())
+                
             self.app.notify(f"Deleted active wallet: {active_pub[:8]}...", severity="information")
         except Exception as e:
             self.app.notify(f"Delete Error: {e}", severity="error")
@@ -232,6 +237,12 @@ class WalletView(Vertical):
              upsert=True
         )
         self.load_wallets_into_table()
+        
+        # Globally notify the app that the active wallet changed
+        # This will update System Header balance and Trade Panel
+        if hasattr(self.app, "load_global_wallet"):
+            asyncio.create_task(self.app.load_global_wallet())
+            
         try:
             self.query_one("#status_msg", Static).update(f"Active wallet set: {pub_key}")
         except: pass
@@ -312,6 +323,10 @@ class WalletView(Vertical):
                 for pub, bal in balances.items():
                     try: 
                         table.update_cell(pub, bal_col, f"{bal:.4f}")
+                        
+                        # Sync to app header if this is the active wallet
+                        if hasattr(self.app, "active_wallet_pub") and self.app.active_wallet_pub == pub:
+                             self.app.wallet_balance_str = f"{bal:.4f} SOL"
                     except: pass
             
             # 2. Fetch Tx Counts (Still individual for now, but parallel)

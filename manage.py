@@ -11,9 +11,9 @@ def start(use_docker=False):
     else:
         start_local()
 
-def check_dependencies(python_exec):
+def check_dependencies(python_exec, quiet=False):
     """Check if critical dependencies are installed."""
-    print("Checking dependencies...")
+    if not quiet: print("Checking dependencies...")
     required = ["textual", "motor", "websockets", "httpx", "psutil", "rich"]
     missing = []
     
@@ -34,47 +34,44 @@ def check_dependencies(python_exec):
         print("   Or: poetry install")
         return False
     
-    print("✅ All dependencies installed")
+    if not quiet: print("✅ All dependencies installed")
     return True
 
 def start_local():
     """Start the app locally with MongoDB container for database."""
-    print("Starting pumpTUI (Standalone Mode)...")
-    
     # Detect Virtual Environment
     python_exec = sys.executable
     venv_python = os.path.join(os.getcwd(), ".venv", "bin", "python")
     
     if os.path.exists(venv_python):
-        print(f"Using Virtual Environment: {venv_python}")
         python_exec = venv_python
-    else:
-        print(f"Using System Python: {python_exec}")
     
-    # Check dependencies
-    if not check_dependencies(python_exec):
+    # Check dependencies (quietly)
+    if not check_dependencies(python_exec, quiet=True):
         sys.exit(1)
 
-    # Start MongoDB Container
-    if not start_mongo_container():
-        print("❌ Failed to start MongoDB. Cannot continue.")
+    # Start MongoDB Container (quietly)
+    if not start_mongo_container(quiet=True):
         sys.exit(1)
 
     try:
         # Run the app's main entry point
         env = os.environ.copy()
         env["PYTHONPATH"] = f".:{env.get('PYTHONPATH', '')}"
-        # ALWAYS set MONGO_URI to the correct port for standalone mode
-        # This overrides any .env setting to ensure we connect to pumptui-mongo on port 27018
         env["MONGO_URI"] = f"mongodb://localhost:{MONGO_PORT}"
-        print(f"📡 Database URI: mongodb://localhost:{MONGO_PORT}")
+        
+        # Pass environment info to the app for the startup screen
+        env["PUMPTUI_PYTHON_EXEC"] = python_exec
+        env["PUMPTUI_VENV"] = "True" if python_exec == venv_python else "False"
+        
         subprocess.run([python_exec, "-m", "pump_tui.main"], env=env)
     except KeyboardInterrupt:
-        print("\nExiting pumpTUI.")
+        pass
     except Exception as e:
         print(f"Error starting app: {e}")
-    # Note: We don't stop MongoDB container on exit - it's shared with Docker mode
-    # User can manually stop with: docker stop pumptui-mongo
+    finally:
+        # Automatically stop MongoDB in standalone mode
+        stop_local()
 
 # Container naming constants for the pumpTUI stack
 # Both standalone and Docker modes share the same MongoDB container for data consistency
@@ -165,12 +162,19 @@ def stop_mongo_container():
     except Exception:
         pass
 
-def start_mongo_container():
-    """Start shared MongoDB container (used by both standalone and Docker modes)."""
+def start_mongo_container(quiet=False):
+    """Start shared MongoDB container using docker-compose (part of pumpTUI stack)."""
     container_name = MONGO_CONTAINER
-    volume_name = MONGO_VOLUME
     
-    print(f"📦 Checking MongoDB container ({container_name})...")
+    if not quiet: print(f"📦 Checking MongoDB container ({container_name})...")
+    
+    # Check if docker-compose is available
+    try:
+        subprocess.run(["docker-compose", "--version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("❌ docker-compose is not installed. MongoDB container cannot be started.")
+        print("💡 Install docker-compose or configure MONGO_URI in .env to point to an external MongoDB instance.")
+        return False
     
     docker_prefix, success = get_docker_prefix()
     
@@ -193,51 +197,46 @@ def start_mongo_container():
     status = check_container_status(docker_prefix, container_name)
     
     if status["running"]:
-        print(f"✅ MongoDB container ({container_name}) is already running")
+        if not quiet: print(f"✅ MongoDB container ({container_name}) is already running")
         return True
     elif status["stopped"]:
-        # Container exists but stopped, start it
-        print(f"🔄 Starting existing MongoDB container ({container_name})...")
-        result = subprocess.run(docker_prefix + ["docker", "start", container_name], capture_output=True)
+        # Container exists but stopped, start it via docker-compose
+        if not quiet: print(f"🔄 Starting existing MongoDB container ({container_name})...")
+        result = subprocess.run(
+            docker_prefix + ["docker-compose", "-p", "pumpTUI", "start", "mongodb"],
+            capture_output=True,
+            text=True
+        )
         if result.returncode == 0:
-            print(f"✅ MongoDB container started")
+            if not quiet: print(f"✅ MongoDB container started (pumpTUI stack)")
             time.sleep(2)  # Give MongoDB time to initialize
             return True
         else:
-            print(f"❌ Failed to start MongoDB container")
+            # Fallback to docker start if compose fails
+            result = subprocess.run(docker_prefix + ["docker", "start", container_name], capture_output=True)
+            if result.returncode == 0:
+                if not quiet: print(f"✅ MongoDB container started")
+                time.sleep(2)
+                return True
+            if not quiet: print(f"❌ Failed to start MongoDB container: {result.stderr}")
             return False
     else:
-        # Container doesn't exist, create it
-        print(f"📦 Creating MongoDB container ({container_name})...")
+        # Container doesn't exist, create it via docker-compose (only mongodb service)
+        if not quiet: print(f"📦 Creating MongoDB container in pumpTUI stack...")
         
-        # Create volume if it doesn't exist
-        subprocess.run(
-            docker_prefix + ["docker", "volume", "create", volume_name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-        
-        # Run MongoDB container (port 27018 to match docker-compose)
         result = subprocess.run(
-            docker_prefix + [
-                "docker", "run", "-d",
-                "--name", container_name,
-                "-p", f"{MONGO_PORT}:27017",
-                "-v", f"{volume_name}:/data/db",
-                "--restart", "unless-stopped",
-                "mongo:6"
-            ],
+            docker_prefix + ["docker-compose", "-p", "pumpTUI", "up", "-d", "mongodb"],
             capture_output=True,
             text=True
         )
         
         if result.returncode == 0:
-            print(f"✅ MongoDB container created and started")
-            print(f"💾 Data persisted in volume: {volume_name}")
+            if not quiet: print(f"✅ MongoDB container created and started (pumpTUI stack)")
+            if not quiet: print(f"💾 Data persisted in volume: {MONGO_VOLUME}")
             time.sleep(3)  # Give MongoDB time to initialize
             return True
         else:
-            print(f"❌ Failed to create MongoDB container: {result.stderr}")
+            if not quiet: print(f"❌ Failed to create MongoDB container: {result.stderr}")
             return False
 
 def check_docker_containers(docker_prefix):
@@ -369,6 +368,13 @@ def start_docker():
                 subprocess.run(docker_prefix + ["docker", "attach", containers["app_name"]])
             except KeyboardInterrupt:
                 print("\nDetached from session. App is still running.")
+            
+            # After attach finishes, check if the app container is still running
+            # If it stopped, stop the whole stack (MongoDB)
+            status = check_container_status(docker_prefix, DOCKER_APP_CONTAINER)
+            if not status["running"]:
+                print("\nApp stopped. Shutting down stack...")
+                stop_docker()
         else:
             print("❌ Failed to start containers.")
             cmd_prefix = "sudo " if docker_prefix else ""
@@ -408,6 +414,13 @@ def start_docker():
                 subprocess.run(docker_prefix + ["docker", "attach", new_status["app_name"]])
             except KeyboardInterrupt:
                 print("\nDetached from session. App is still running.")
+                
+            # After attach finishes, check if the app container is still running
+            # If it stopped, stop the whole stack (MongoDB)
+            status = check_container_status(docker_prefix, DOCKER_APP_CONTAINER)
+            if not status["running"]:
+                print("\nApp stopped. Shutting down stack...")
+                stop_docker()
         else:
             print("❌ Failed to start containers.")
             cmd_prefix = "sudo " if docker_prefix else ""

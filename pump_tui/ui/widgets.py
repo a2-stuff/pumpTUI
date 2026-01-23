@@ -10,6 +10,7 @@ import asyncio
 import math
 import re
 import time
+import httpx
 from datetime import datetime
 from ..config import config
 from ..trading import TradingClient
@@ -1268,20 +1269,19 @@ class TradePanel(Container):
 
     def compose(self) -> ComposeResult:
         with Container(id="trade_panel_container"):
-            # Spacer above buttons
+            # Buy/Sell Toggle (Top)
+            # One line spacing above handled by spacer
             yield Label("", classes="spacer")
-
-            # Buy/Sell Toggle (Moved to Top)
             with Horizontal(classes="trade_buttons"):
                 yield Button("Buy (b)", id="buy_button", classes="trade_button -active")
                 yield Button("Sell (s)", id="sell_button", classes="trade_button")
 
-            # Spacer
+            # Spacer after buttons
             yield Label("", classes="spacer")
 
             yield Label("Trade: None Selected", id="trade_title", classes="panel-header")
             
-            # Spacer below title
+            # Spacer after Trade title
             yield Label("", classes="spacer")
             
             # Market Stats Box (MC | Vol | Dev)
@@ -1305,7 +1305,7 @@ class TradePanel(Container):
                      yield Label("Creator: -", id="creator_label", classes="count-label")
                      yield Label("Tokens: -", id="launched_count_label", classes="count-label")
                      yield Label("Migrated: -", id="migrated_count_label", classes="count-label")
-                     yield Label("Int. Buy: -", id="initial_label", classes="count-label")
+                     yield Label("Buy: -", id="initial_label", classes="count-label")
 
             # Price Chart Box
             with Container(classes="stats-grid", id="chart_box"):
@@ -1317,6 +1317,9 @@ class TradePanel(Container):
                 # Name and Contract with Blue Label
                 yield Label("[b][#89b4fa]Token Name:[/][/] -", id="name_label", classes="panel-info")
                 yield Label("[b][#89b4fa]Contract:[/][/] -", id="ca_label", classes="panel-info")
+                
+                # Spacer after Token Name/Contract bar
+                yield Label("", classes="spacer")
                 
                 yield Label("Description:", classes="info-box-header")
                 yield Label("-", id="desc_label", classes="info-box-text")
@@ -1331,14 +1334,15 @@ class TradePanel(Container):
                     yield Label("-", id="twitter_label", classes="link-item")
                     yield Label("-", id="telegram_label", classes="link-item")
             
-            # Input Box (Amount | Input | Denom | Est)
+            # Wallet Info & Input Box (Amount | Input | Denom | Est)
             with Container(id="amount_stats_box", classes="stats-grid"):
                 with Vertical():
                     with Horizontal(classes="input-row-inner"):
                         yield Label("[b][#89b4fa]Amount:[/][/]", classes="input_label")
                         yield TradeInput(value="1.0", id="amount_input", classes="input_field", restrict=r"^[0-9.%]*$")
                         yield Label("(SOL)", id="denom_label", classes="mini-label")
-                    yield Label("", id="estimated_amount")
+                    # Est Tokens below amount input
+                    yield Label("Est. Tokens: -", id="estimated_amount", classes="mini-label")
             
             # Action Button (Centered)
             with Horizontal(classes="button-row"):
@@ -1353,32 +1357,81 @@ class TradePanel(Container):
         self.run_worker(self.load_active_wallet())
     
     async def load_active_wallet(self):
+        """Load active wallet info with retry if DB is still connecting."""
         try:
             from ..database import db
-            active_doc = await db.settings.find_one({"key": "active_wallet"})
-            if active_doc and "value" in active_doc:
-                pub_key = active_doc["value"]
-                wallet = await db.wallets.find_one({"walletPublicKey": pub_key})
-                if wallet:
+            
+            # 1. Wait for DB connection
+            retries = 0
+            while not db.connected and retries < 15:
+                await asyncio.sleep(1.0)
+                retries += 1
+            
+            if not db.connected:
+                 try: self.query_one("#active_wallet_info", Label).update("Active: [red]DB Error[/]")
+                 except: pass
+                 return
+
+            # 2. Try to load from local state if app already has it
+            if hasattr(self.app, "active_wallet") and self.app.active_wallet:
+                self.active_wallet = self.app.active_wallet
+            else:
+                # 3. Otherwise fetch from DB
+                active_doc = await db.settings.find_one({"key": "active_wallet"})
+                if active_doc and "value" in active_doc:
+                    pub_key = active_doc["value"]
                     wallets = await db.get_wallets()
                     self.active_wallet = next((w for w in wallets if w["walletPublicKey"] == pub_key), None)
             
+            await self.update_wallet_ui()
+            
+            # Start periodic internal sync (just to be safe)
+            if not hasattr(self, "_wallet_sync_timer"):
+                self._wallet_sync_timer = self.set_interval(30.0, self.update_wallet_ui)
+            
+        except Exception as e:
+            try:
+                try: self.query_one("#active_wallet_info", Label).update("Active: [red]Error[/]")
+                except: pass
+                with open("error.log", "a") as f: f.write(f"Panel Wallet Load Error: {e}\n")
+            except: pass
+
+    async def update_wallet_ui(self):
+        """Update the UI labels for the active wallet."""
+        try:
+            if not self.is_mounted: return
+            
+            # Active wallet info and balance are now primarily in the System Header.
+            # We keep these queries safe in case they are restored or used elsewhere.
             if self.active_wallet:
                 pub = self.active_wallet.get("walletPublicKey")
                 display = f"{pub[:6]}...{pub[-6:]}"
-                self.query_one("#active_wallet_info", Label).update(f"Active: [#f9e2af]{display}[/]")
+                try: self.query_one("#active_wallet_info", Label).update(Text.from_markup(f"Active: [#f9e2af]{display}[/]"))
+                except: pass
+                # Trigger balance fetch
+                await self.fetch_wallet_balance()
             else:
-                self.query_one("#active_wallet_info", Label).update("Active: [red]None[/]")
-            
-            await self.fetch_wallet_balance()
-        except Exception as e:
-            self.query_one("#error_label", Label).update(f"Wallet Error")
+                try: self.query_one("#active_wallet_info", Label).update(Text.from_markup("Active: [red]None[/]"))
+                except: pass
+                try: self.query_one("#wallet_balance", Label).update("Balance: -")
+                except: pass
+        except: pass
 
     async def fetch_wallet_balance(self) -> None:
+        """Fetch balance for the active wallet, prioritizing app cache."""
         try:
             if not self.active_wallet: return
             pub_key = self.active_wallet.get("walletPublicKey")
             
+            # Optimization: Use App's already-cached balance if it matches the current wallet
+            if hasattr(self.app, "active_wallet_pub") and self.app.active_wallet_pub == pub_key:
+                if hasattr(self.app, "wallet_balance_str") and self.app.wallet_balance_str:
+                    bal_text = self.app.wallet_balance_str
+                    try: self.query_one("#wallet_balance", Label).update(f"Bal: {bal_text}")
+                    except: pass
+                    return
+
+            # Fallback: Live RPC Fetch
             payload = {"jsonrpc": "2.0", "id": 1, "method": "getBalance", "params": [pub_key]}
             async with httpx.AsyncClient(timeout=2.0) as http_client:
                 response = await http_client.post(config.rpc_url, json=payload)
@@ -1387,7 +1440,8 @@ class TradePanel(Container):
                     val = data.get("result", {}).get("value")
                     if val is not None:
                          bal_sol = val / 1_000_000_000
-                         self.query_one("#wallet_balance", Label).update(f"Bal: {bal_sol:.4f} SOL")
+                         try: self.query_one("#wallet_balance", Label).update(f"Bal: {bal_sol:.4f} SOL")
+                         except: pass
         except: pass
 
     def update_token(self, token_data: Dict[str, Any]):
@@ -1493,9 +1547,9 @@ class TradePanel(Container):
             sol_price = getattr(self.app, "sol_price", 0.0)
             if sol_price > 0:
                 mc_val_usd = mc_sol * sol_price
-                mc_display = f"[{mc_style}]MC: ${mc_val_usd:,.0f}[/]"
+                mc_display = f"MC: [{mc_style}]${mc_val_usd:,.0f}[/]"
             else:
-                mc_display = f"[{mc_style}]MC: {mc_sol:,.2f} SOL[/]"
+                mc_display = f"MC: [{mc_style}]{mc_sol:,.2f} SOL[/]"
             
             self.query_one("#mc_label", Label).update(Text.from_markup(mc_display))
             
@@ -1537,25 +1591,20 @@ class TradePanel(Container):
                 vol_val_usd = vol_val * sol_price
                 v_thresh = config.thresholds["vol"]
                 v_style = "green" if vol_val_usd > v_thresh["yellow"] else "yellow" if vol_val_usd >= v_thresh["red"] else "red"
-                vol_display = f"[{v_style}]Vol: ${vol_val_usd:,.0f}[/]"
+                vol_display = f"Vol: [{v_style}]${vol_val_usd:,.0f}[/]"
             else:
-                vol_display = f"Vol: {vol_val:.2f} SOL"
+                vol_display = f"Vol: [{mc_style}]{vol_val:.2f} SOL[/]"
             
             self.query_one("#vol_label", Label).update(Text.from_markup(vol_display))
 
             # Dev Status
             dev_sold = self.token_data.get("dev_sold", False)
-            dev_str = "[red]Dev: SOLD[/]" if dev_sold else "[green]Dev: HOLDING[/]"
+            dev_str = "Dev: [red]SOLD[/]" if dev_sold else "Dev: [green]HOLDING[/]"
             self.query_one("#dev_label", Label).update(Text.from_markup(dev_str))
 
             # Dev Initial Buy
             init_buy = self.token_data.get("initial_buy", 0.0)
-            # If not stored, try to calculate from data_store if available (usually passed in token_data)
-            # Assuming 'initial_buy' is populated during processing or we fetch it.
-            # For now, default to 0.0 or check if we can derive it.
-            # In Pump.fun, initial buy is usually the first buy transaction by the creator.
-            # If we don't have it, just show 0.0 or -.
-            self.query_one("#initial_label", Label).update(f"Int. Buy: {init_buy:.2f}")
+            self.query_one("#initial_label", Label).update(f"Buy: {init_buy:.2f}")
 
             # Display Name and full CA
             name = self.token_data.get("name", "Unknown")
@@ -1582,7 +1631,7 @@ class TradePanel(Container):
             creator = self.token_data.get("creator") or self.token_data.get("traderPublicKey", "N/A")
             if creator and creator != "N/A":
                 display_creator = f"{creator[:4]}...{creator[-4:]}"
-                self.query_one("#creator_label", Label).update(f"Creator: {display_creator}  ")
+                self.query_one("#creator_label", Label).update(f"Creator: {display_creator}")
                 
                 # Fetch launched/migrated counts asynchronously
                 asyncio.create_task(self._fetch_creator_counts(creator))

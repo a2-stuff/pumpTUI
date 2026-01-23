@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.2.0] - 2026-01-23
+
+### Added
+- **Global Wallet Synchronization**: Active wallet and balance are now synchronized globally across the System Header, Trade Panel, and Wallet Manager.
+- **Improved Hotkeys**:
+  - Restored `c` hotkey for Copying Contract Address (CA) from Trade Panel or Table.
+  - Added `l` hotkey to switch to New Tokens tab and focus the table for navigation.
+  - Added `o` hotkey with cross-platform support to open tokens in the browser (`xdg-open`, `open`, `os.startfile`).
+- **Enhanced Startup Animation**: Integrated dependency, environment (Venv/System), and database connectivity checks into a polished TUI startup experience.
+- **Standalone Database Management**: `manage.py` now automatically starts and stops a dedicated MongoDB Docker container in standalone mode.
+
+### Changed
+- **Trade Panel Refinement**:
+  - Restructured layout with improved spacing and boxed containers for stats.
+  - Labels (MC, Vol, Dev) are now neutral, with colors applied only to the values for better readability.
+  - Centered "Est. Tokens" display below the amount input.
+  - Renamed "Int. Buy" to "Buy" for clarity.
+- **Performance**: Optimized balance fetching by prioritizing cached app-level values to reduce redundant RPC calls.
+
+### Fixed
+- **WebSocket Stability**: Fixed `'ClientConnection' object has no attribute 'closed'` crash by updating to the latest `websockets` API (`.open`).
+- **Wallet Persistence**: Resolved issue where "Created On" dates were not saving or displaying for new wallets.
+- **Trade Panel UI**: Fixed missing `httpx` import causing balance fetch errors in the persistent panel.
+- **Container Cleanup**: Improved shutdown logic to ensure all containers (app and database) are stopped correctly on application exit.
+
 ## [v1.1.9] - 2026-01-22
 
 ### Added
