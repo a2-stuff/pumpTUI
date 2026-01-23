@@ -2,6 +2,7 @@
 import subprocess
 import sys
 import os
+import time
 
 def start(use_docker=False):
     """Start the pumpTUI application."""
@@ -111,30 +112,113 @@ def start_docker():
             print("❌ Error: Neither .env nor .env.example found.")
             sys.exit(1)
     
-    print("🔄 Syncing code and starting containers...")
+    # Check container status
+    check_result = subprocess.run(
+        docker_prefix + ["docker", "ps", "-a", "--filter", "name=app", "--format", "{{.Names}}\t{{.Status}}"],
+        capture_output=True,
+        text=True
+    )
     
-    # Always build and up to ensure latest code is running
-    # Data is safe in volumes. Docker caching makes this fast.
-    result = subprocess.run(docker_prefix + ["docker-compose", "up", "-d", "--build"])
+    container_info = check_result.stdout.strip()
+    container_name = None
+    container_status = ""
     
-    if result.returncode == 0:
-        print("✅ PumpTUI is running!")
+    if container_info:
+        # Parse the container name and status
+        lines = container_info.split('\n')
+        for line in lines:
+            if 'app' in line:
+                parts = line.split('\t', 1)
+                if len(parts) == 2:
+                    container_name = parts[0]
+                    container_status = parts[1]
+                    break
+    
+    # Check if image exists
+    image_check = subprocess.run(
+        docker_prefix + ["docker", "images", "-q", "pumptui:latest"],
+        capture_output=True,
+        text=True
+    )
+    image_exists = bool(image_check.stdout.strip())
+    
+    if container_status.startswith("Up"):
+        print("✅ PumpTUI is already running!")
         print("🔗 Attaching to session...")
         print("💡 Tip: Press Ctrl+P then Ctrl+Q to detach without stopping.")
-        
-        # Wait a moment for startup
-        import time
-        time.sleep(2)
-        
         try:
-            subprocess.run(docker_prefix + ["docker", "attach", "pumptui-app"])
+            subprocess.run(docker_prefix + ["docker", "attach", container_name])
         except KeyboardInterrupt:
             print("\nDetached from session. App is still running.")
+    elif container_status.startswith("Exited") or container_status.startswith("Created"):
+        print("🔄 Starting existing containers...")
+        result = subprocess.run(docker_prefix + ["docker-compose", "start"])
+        if result.returncode == 0:
+            print("✅ PumpTUI is running!")
+            print("🔗 Attaching to session...")
+            print("💡 Tip: Press Ctrl+P then Ctrl+Q to detach without stopping.")
+            import time
+            time.sleep(2)
+            # Get the container name again after starting
+            check_result2 = subprocess.run(
+                docker_prefix + ["docker", "ps", "--filter", "name=app", "--format", "{{.Names}}"],
+                capture_output=True,
+                text=True
+            )
+            container_name = check_result2.stdout.strip().split('\n')[0]
+            try:
+                subprocess.run(docker_prefix + ["docker", "attach", container_name])
+            except KeyboardInterrupt:
+                print("\nDetached from session. App is still running.")
+        else:
+            print("❌ Failed to start containers.")
+            cmd_prefix = "sudo " if docker_prefix else ""
+            print(f"Check logs with: {cmd_prefix}docker-compose logs")
+            sys.exit(1)
     else:
-        print("❌ Failed to start containers.")
-        cmd_prefix = "sudo " if docker_prefix else ""
-        print(f"Check logs with: {cmd_prefix}docker-compose logs")
-        sys.exit(1)
+        # No existing container or image needs building
+        if not image_exists:
+            print("📦 Building Docker image (first time setup)...")
+        else:
+            print("🔄 Creating containers...")
+        
+        # Remove any old containers with stale image references
+        subprocess.run(
+            docker_prefix + ["docker-compose", "rm", "-f"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        
+        # Build and start
+        build_flag = ["--build"] if not image_exists else []
+        result = subprocess.run(docker_prefix + ["docker-compose", "up", "-d"] + build_flag)
+        
+        if result.returncode == 0:
+            print("✅ PumpTUI is running!")
+            print("🔗 Attaching to session...")
+            print("💡 Tip: Press Ctrl+P then Ctrl+Q to detach without stopping.")
+            
+            # Wait a moment for startup
+            import time
+            time.sleep(2)
+            
+            # Get the actual container name
+            check_result3 = subprocess.run(
+                docker_prefix + ["docker", "ps", "--filter", "name=app", "--format", "{{.Names}}"],
+                capture_output=True,
+                text=True
+            )
+            container_name = check_result3.stdout.strip().split('\n')[0]
+            
+            try:
+                subprocess.run(docker_prefix + ["docker", "attach", container_name])
+            except KeyboardInterrupt:
+                print("\nDetached from session. App is still running.")
+        else:
+            print("❌ Failed to start containers.")
+            cmd_prefix = "sudo " if docker_prefix else ""
+            print(f"Check logs with: {cmd_prefix}docker-compose logs")
+            sys.exit(1)
 
 def stop(use_docker=False):
     """Stop any running pumpTUI processes."""
@@ -176,6 +260,42 @@ def stop_docker():
         print("❌ Failed to stop containers.")
         sys.exit(1)
 
+def rebuild_docker():
+    """Rebuild the Docker image with latest code changes."""
+    print("🔨 Rebuilding pumpTUI Docker image...")
+    
+    # Check if we need sudo
+    docker_prefix = []
+    try:
+        subprocess.run(["docker", "ps"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    except subprocess.CalledProcessError:
+        docker_prefix = ["sudo"]
+        try:
+            subprocess.run(["sudo", "-n", "true"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        except subprocess.CalledProcessError:
+            print("Please enter your password:")
+            try:
+                subprocess.run(["sudo", "true"], check=True)
+            except:
+                print("❌ Authentication failed")
+                sys.exit(1)
+    
+    print("📦 Stopping containers...")
+    subprocess.run(docker_prefix + ["docker-compose", "stop"])
+    
+    print("🗑️  Removing old containers...")
+    subprocess.run(docker_prefix + ["docker-compose", "rm", "-f"])
+    
+    print("🔨 Building new image...")
+    result = subprocess.run(docker_prefix + ["docker-compose", "build", "--no-cache"])
+    
+    if result.returncode == 0:
+        print("✅ Rebuild complete!")
+        print("\n💡 Start the app with: python3 manage.py start --docker")
+    else:
+        print("❌ Build failed.")
+        sys.exit(1)
+
 def clean_docker():
     """Clean up Docker containers and volumes."""
     print("⚠️  This will remove all pumpTUI containers, networks, and volumes.")
@@ -204,7 +324,7 @@ def clean_docker():
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python3 manage.py [start|stop|clean] [--docker]")
+        print("Usage: python3 manage.py [start|stop|rebuild|clean] [--docker]")
         sys.exit(1)
     
     cmd = sys.argv[1].lower()
@@ -214,6 +334,12 @@ def main():
         start(use_docker)
     elif cmd == "stop":
         stop(use_docker)
+    elif cmd == "rebuild":
+        if use_docker:
+            rebuild_docker()
+        else:
+            print("The 'rebuild' command is only available with --docker flag.")
+            print("Usage: python3 manage.py rebuild --docker")
     elif cmd == "clean":
         if use_docker:
             clean_docker()
@@ -222,7 +348,7 @@ def main():
             print("Usage: python3 manage.py clean --docker")
     else:
         print(f"Unknown command: {cmd}")
-        print("Usage: python3 manage.py [start|stop|clean] [--docker]")
+        print("Usage: python3 manage.py [start|stop|rebuild|clean] [--docker]")
         sys.exit(1)
 
 if __name__ == "__main__":
