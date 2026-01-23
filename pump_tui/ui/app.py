@@ -122,7 +122,7 @@ class SystemHeader(Container):
 class PumpApp(App):
     """A Textual app to view Pump.fun tokens."""
 
-    TITLE = "pumpTUI v1.1.7"
+    TITLE = "pumpTUI v1.1.8"
     CSS_PATH = config.THEMES.get(config.current_theme, "styles.tcss")
     BINDINGS = [
         Binding("q", "quit", "Quit", show=False),

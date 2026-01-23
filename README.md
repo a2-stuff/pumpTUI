@@ -1,7 +1,7 @@
 # pumpTUI
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Version](https://img.shields.io/badge/version-1.1.6-orange.svg)
+![Version](https://img.shields.io/badge/version-1.1.8-orange.svg)
 ![Solana](https://img.shields.io/badge/Solana-Data%20Stream-black.svg?logo=solana)
 
 pumpTUI is a Terminal User Interface (TUI) application for viewing and tracking tokens on Pump.fun directly from your terminal. It provides real-time updates, detailed token information, and wallet tracking capabilities.
@@ -22,9 +22,13 @@ pumpTUI is a Terminal User Interface (TUI) application for viewing and tracking 
 
 ## Installation
 
-### Option 1: Docker (Recommended for Easy Setup)
+pumpTUI can be deployed in two ways: **Docker** (recommended, zero dependencies) or **Standalone** (local Python installation).
 
-**Zero localhost dependencies** - Everything runs in containers!
+### Option 1: 🐳 Docker Deployment (Recommended)
+
+**Zero localhost dependencies** - Everything runs in isolated containers!
+
+#### Quick Start
 
 1.  **Clone the repository:**
     ```bash
@@ -35,23 +39,63 @@ pumpTUI is a Terminal User Interface (TUI) application for viewing and tracking 
 2.  **Configure environment:**
     ```bash
     cp .env.example .env
-    # Edit .env with your API key and settings
+    # Edit .env with your API key and settings (see Configuration section)
     ```
 
-3.  **Start with Docker:**
+3.  **Start the application:**
     ```bash
     python3 manage.py start --docker
+    # Or with sudo if needed:
+    sudo python3 manage.py start --docker
     ```
-    
-    That's it! Docker will automatically:
-    - Download and set up MongoDB
-    - Build the application image
-    - Start both containers
-    - Connect you to the TUI
 
-📚 **See [DOCKER.md](DOCKER.md) for the complete Docker deployment guide**
+**What happens automatically:**
+- Downloads MongoDB container (if needed)
+- Builds pumpTUI application image
+- Creates persistent data volumes
+- Starts both containers
+- Attaches you to the TUI interface
 
-### Option 2: Local Installation
+#### Docker Commands
+
+```bash
+# Start (smart: attaches if running, starts if stopped, builds if missing)
+python3 manage.py start --docker
+
+# Stop (preserves all data)
+python3 manage.py stop --docker
+
+# Rebuild after code changes (data preserved)
+python3 manage.py rebuild --docker
+
+# Complete cleanup (⚠️ DELETES ALL DATA)
+python3 manage.py clean --docker
+```
+
+#### Benefits of Docker Deployment
+
+✅ No Python packages installed on your system  
+✅ No MongoDB installation required  
+✅ Consistent environment across all machines  
+✅ Automatic wallet/settings persistence in Docker volumes  
+✅ Easy distribution: `git clone` + `start --docker`  
+✅ One-command cleanup
+
+📚 **For detailed Docker documentation, see [DOCKER.md](DOCKER.md)**
+
+---
+
+### Option 2: 💻 Standalone Installation
+
+**Local Python installation** - Full control over dependencies.
+
+#### Prerequisites
+
+- Python 3.10+
+- MongoDB (running locally or remote)
+- pip or Poetry
+
+#### Installation Steps
 
 1.  **Clone the repository:**
     ```bash
@@ -59,65 +103,116 @@ pumpTUI is a Terminal User Interface (TUI) application for viewing and tracking 
     cd pumpTUI
     ```
 
-2.  **Set up a virtual environment (optional but recommended):**
+2.  **Set up a virtual environment (recommended):**
     ```bash
     python3 -m venv .venv
-    source .venv/bin/activate
+    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
     ```
 
 3.  **Install dependencies:**
-    This project uses Poetry for dependency management.
+    
+    **Using Poetry (recommended):**
     ```bash
     pip install poetry
     poetry install
     ```
-    Alternatively, if you use `pip`:
+    
+    **Using pip:**
     ```bash
     pip install -r requirements.txt
     ```
 
+4.  **Install and configure MongoDB:**
+    ```bash
+    # Ubuntu/Debian
+    sudo apt-get install mongodb
+    sudo systemctl start mongodb
+    
+    # macOS
+    brew install mongodb-community
+    brew services start mongodb-community
+    ```
 
-## Setup
-Environment variables are handled via a `.env` file in the root directory. To configure or update your settings:
+5.  **Configure environment:**
+    ```bash
+    cp .env.example .env
+    # Edit .env with your settings
+    ```
 
-1.  **Create/Edit `.env`**: If not present, create a file named `.env` based on `.env.example`.
-2.  **Update API Key**: Add your PumpPortal API Key. You can generate one at [pumpportal.fun/trading-api/setup](https://pumpportal.fun/trading-api/setup).
+#### Standalone Commands
+
+```bash
+# Start with management script
+python3 manage.py start
+
+# Or run directly
+python3 -m pump_tui.main
+
+# Stop (Ctrl+C or press 'q' in app)
+```
+
+---
+
+## Configuration
+
+Environment variables are managed via `.env` in the root directory:
+
+1.  **Create/Edit `.env`**: 
+    ```bash
+    cp .env.example .env
+    nano .env  # or your preferred editor
+    ```
+
+2.  **Required Settings:**
     ```env
+    # PumpPortal API Key (get from: https://pumpportal.fun/trading-api/setup)
     API_KEY=your_actual_api_key_here
-    ```
-3.  **Update RPC URL**: Use a premium RPC (Alchemy, QuickNode) for faster trade execution.
-    ```env
+    
+    # Solana RPC (use premium for better performance)
     RPC_URL=https://solana-mainnet.g.alchemy.com/v2/your_key
+    
+    # MongoDB Connection (Docker auto-configures this)
+    MONGO_URI=mongodb://localhost:27017
     ```
-4.  **Trading Defaults**: You can also set default slippage and priority fees:
+
+3.  **Optional Trading Defaults:**
     ```env
     DEFAULT_SLIPPAGE=10
     DEFAULT_PRIORITY_FEE=0.005
     ```
 
-> **Note**: After updating the `.env` file, you must restart the application for changes to take effect.
+> **Note**: Restart the application after changing `.env` for changes to take effect.
 
-## Trading Requirements
+---
 
-To use the **Buy** and **Sell** functions, you must set up a wallet within the application:
+## Trading Setup
 
-1.  **Generate a Wallet**: Go to the **Wallets** tab (`w`) and click **Generate New**. This will create a fresh Solana account for you.
-2.  **Fund your Wallet**: Send a small amount of SOL to the generated address. This is required for transaction fees and purchasing tokens.
-3.  **Set as Default**: In the **Wallets** tab, select your wallet to mark it as the **Active** wallet. You will see an `[X]` next to the active wallet. If you only have one wallet, it will be selected automatically.
-4.  **Trade**: Once funded and active, you can press `b` on any token to open the trade modal.
+To use **Buy** and **Sell** functions:
+
+1.  **Navigate to Wallets**: Press `w` to open the Wallets tab
+2.  **Generate Wallet**: Click **Generate New** to create a Solana wallet
+3.  **Fund Wallet**: Send SOL to the generated address (for fees and trading)
+4.  **Set Active**: Check the box next to your wallet to mark it active `[X]`
+5.  **Trade**: Press `b` on any token to open the trade modal
+
+> **Security**: Wallets are stored encrypted in MongoDB (Docker) or locally (Standalone)
+
+---
 
 ## Usage
 
-To start the application, use the provide management script:
+### Running the Application
 
+**Docker:**
 ```bash
-python3 manage.py start
+python3 manage.py start --docker
+# Detach without stopping: Ctrl+P, then Ctrl+Q
 ```
 
-Or run the module directly:
-
+**Standalone:**
 ```bash
-python3 -m pump_tui.ui.app
+python3 manage.py start
+# Exit: Press 'q' or Ctrl+C
 ```
 
 ### Key Bindings

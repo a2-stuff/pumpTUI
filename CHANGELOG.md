@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.1.8] - 2026-01-22
+
+### Added
+- **Docker Deployment Improvements**:
+  - **Smart Container Management**: The `manage.py start --docker` command now intelligently detects container state:
+    - If containers are running → Attaches to the session
+    - If containers are stopped → Restarts them without rebuilding
+    - If containers don't exist → Creates and builds them
+  - **New `rebuild` Command**: Added `python3 manage.py rebuild --docker` for explicit image rebuilding after code changes
+  - **Data Safety**: Eliminates prompts to recreate containers, protecting wallet and settings data
+  - **Dynamic Container Naming**: Handles Docker-generated container name prefixes automatically
+- **Documentation Enhancements**:
+  - Enhanced README.md with comprehensive deployment instructions for both Docker and Standalone modes
+  - Added clear workflow examples and command references
+  - Created DOCKER_IMPROVEMENTS.md explaining the new container management system
+  - Updated DOCKER.md with new rebuild command documentation
+
+### Changed
+- **Container Startup Logic**: 
+  - Removed automatic `--build` flag from `start --docker` command
+  - Only builds when image is missing, preventing unnecessary container recreation
+  - Faster startup times when restarting existing containers
+- **Documentation Structure**: Reorganized README for better clarity between Docker and Standalone deployment
+
+### Fixed
+- **Container Recreation Issue**: Fixed prompt asking to "Continue with the new image?" which could cause data loss concerns
+- **Startup Reliability**: Resolved Docker startup failures when containers had stale image references
+- **Container Attach**: Fixed error when attaching to containers with Docker-generated name prefixes
+
 ## [v1.1.7] - 2026-01-22
 
 ### Added
