@@ -23,7 +23,6 @@ services:
     stdin_open: true
     tty: true
     volumes:
-      - ./tokensdb:/app/tokensdb
       - ./error.log:/app/error.log
       - ./db_error.log:/app/db_error.log
       - ./debug_stream.log:/app/debug_stream.log
