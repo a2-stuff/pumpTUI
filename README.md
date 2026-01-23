@@ -146,14 +146,14 @@ python3 manage.py clean --docker
 # Start (automatically starts MongoDB container)
 python3 manage.py start
 
-# Stop app (offers to stop MongoDB container too)
+# Stop app and MongoDB container
 python3 manage.py stop
 
 # Or run directly (requires MongoDB already running)
 python3 -m pump_tui.main
 ```
 
-> **Note**: The management script automatically creates and manages a `pumpTUI-mongo` Docker container for the database. Data is persisted in a Docker volume.
+> **Note**: The management script automatically starts and stops a `pumpTUI-mongo` Docker container for the database. Data is persisted in a Docker volume and preserved between sessions.
 
 ---
 
@@ -189,6 +189,47 @@ Environment variables are managed via `.env` in the root directory:
     ```
 
 > **Note**: Restart the application after changing `.env` for changes to take effect.
+
+---
+
+## Data Storage
+
+pumpTUI stores all data (tokens, wallets, settings, tracking) in MongoDB. **Both deployment modes share the same MongoDB container** so your data is available whether you run standalone or Docker mode.
+
+### Shared MongoDB Container
+
+| Component | Name |
+|-----------|------|
+| Container Name | `pumptui-mongo` |
+| Docker Volume | `pumptui-mongodb` |
+| External Port | `27018` |
+
+### 🐳 Docker Deployment
+
+| Data Type | Location |
+|-----------|----------|
+| MongoDB Database | Docker volume: `pumptui-mongodb` |
+| App Container | `pumptui-app` |
+| MongoDB Container | `pumptui-mongo` |
+| Log Files | Mounted to project directory (`./error.log`, `./debug_stream.log`, etc.) |
+
+### 💻 Standalone Mode
+
+| Data Type | Location |
+|-----------|----------|
+| MongoDB Database | Docker volume: `pumptui-mongodb` (shared with Docker mode) |
+| MongoDB Container | `pumptui-mongo` (shared with Docker mode) |
+| Log Files | Project directory (`./error.log`, `./debug_stream.log`, etc.) |
+
+**View containers/volumes:**
+```bash
+docker ps -a --filter "name=pumptui"
+docker volume ls | grep pumptui
+```
+
+**Data persists** across container restarts, app exits, and switching between modes. Only `python3 manage.py clean --docker` will delete the data.
+
+> **Backup Tip**: To backup your data, you can use `docker volume` commands or `mongodump` against the running MongoDB instance on `localhost:27018`.
 
 ---
 

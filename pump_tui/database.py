@@ -35,37 +35,67 @@ class Database:
                     logging.error(f"Invalid Encryption Key: {e}")
         return self._cipher
 
-    async def connect(self):
-        """Initialize connection to MongoDB."""
+    async def connect(self, retries: int = 5, initial_delay: float = 1.0):
+        """Initialize connection to MongoDB with retry logic.
+        
+        Args:
+            retries: Number of connection attempts (default 5)
+            initial_delay: Initial delay between retries in seconds (doubles each retry)
+        """
         if self.connected: 
-            return
+            return True
 
-        try:
-            # Get URI from config (which might default if DB is down, circular dep handling)
-            # We access env directly here to bootstrapping
-            uri = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-            self.client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=2000)
-            
-            # Verify connection (fails fast)
-            await self.client.admin.command('ping')
-            
-            self.db = self.client["pumptui"]
-            self.tokens = self.db["tokens"]
-            self.settings = self.db["settings"]
-            self.wallets = self.db["wallets"]
-            
-            # Create indexes
-            await self.tokens.create_index("mint", unique=True)
-            await self.tokens.create_index([("volume_buckets", 1)]) # optimize aggregation? 
-            # Actually we need index on last_updated for the filter
-            await self.tokens.create_index("last_updated")
-            await self.settings.create_index("key", unique=True)
-            
-            self.connected = True
-            # print("MongoDB Connected.")
-        except Exception as e:
-            logging.error(f"MongoDB Connection Failed: {e}")
-            self.connected = False
+        delay = initial_delay
+        uri = os.getenv("MONGO_URI", "mongodb://localhost:27018")
+        
+        for attempt in range(1, retries + 1):
+            try:
+                self.client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=3000)
+                
+                # Verify connection (fails fast)
+                await self.client.admin.command('ping')
+                
+                self.db = self.client["pumptui"]
+                self.tokens = self.db["tokens"]
+                self.settings = self.db["settings"]
+                self.wallets = self.db["wallets"]
+                
+                # Create indexes
+                await self.tokens.create_index("mint", unique=True)
+                await self.tokens.create_index([("volume_buckets", 1)])
+                await self.tokens.create_index("last_updated")
+                await self.settings.create_index("key", unique=True)
+                
+                self.connected = True
+                logging.info(f"MongoDB Connected on attempt {attempt}")
+                return True
+                
+            except Exception as e:
+                logging.warning(f"MongoDB Connection Attempt {attempt}/{retries} Failed: {e}")
+                if attempt < retries:
+                    await asyncio.sleep(delay)
+                    delay *= 2  # Exponential backoff
+                else:
+                    logging.error(f"MongoDB Connection Failed after {retries} attempts: {e}")
+                    self.connected = False
+                    return False
+        
+        return False
+
+    async def reconnect(self):
+        """Attempt to reconnect to MongoDB if not connected."""
+        if self.connected:
+            return True
+        
+        # Close any existing client
+        if self.client:
+            try:
+                self.client.close()
+            except:
+                pass
+            self.client = None
+        
+        return await self.connect(retries=3, initial_delay=2.0)
 
     async def close(self):
         if self.client:
