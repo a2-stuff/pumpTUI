@@ -96,12 +96,12 @@ python3 manage.py clean --docker
 
 ### Option 2: 💻 Standalone Installation
 
-**Local Python installation** - Full control over dependencies.
+**Local Python installation** - MongoDB runs automatically in a Docker container.
 
 #### Prerequisites
 
 - Python 3.10+
-- MongoDB (running locally or remote)
+- Docker (for MongoDB container)
 - pip or Poetry
 
 #### Installation Steps
@@ -131,18 +131,7 @@ python3 manage.py clean --docker
     pip install -r requirements.txt
     ```
 
-4.  **Install and configure MongoDB:**
-    ```bash
-    # Ubuntu/Debian
-    sudo apt-get install mongodb
-    sudo systemctl start mongodb
-    
-    # macOS
-    brew install mongodb-community
-    brew services start mongodb-community
-    ```
-
-5.  **Configure environment:**
+4.  **Configure environment:**
     ```bash
     # Generate encryption key
     python3 manage.py --encryption-key
@@ -154,14 +143,17 @@ python3 manage.py clean --docker
 #### Standalone Commands
 
 ```bash
-# Start with management script
+# Start (automatically starts MongoDB container)
 python3 manage.py start
 
-# Or run directly
-python3 -m pump_tui.main
+# Stop app (offers to stop MongoDB container too)
+python3 manage.py stop
 
-# Stop (Ctrl+C or press 'q' in app)
+# Or run directly (requires MongoDB already running)
+python3 -m pump_tui.main
 ```
+
+> **Note**: The management script automatically creates and manages a `pumpTUI-mongo` Docker container for the database. Data is persisted in a Docker volume.
 
 ---
 
@@ -232,17 +224,40 @@ python3 manage.py start
 
 ### Key Bindings
 
+#### Navigation
 - `n`: Switch to New Tokens view
-- `v`: Switch to 24h Volume view
 - `t`: Switch to Tracker view
 - `w`: Switch to Wallets view
 - `x`: Switch to Settings
-- `s`: Focus Search bar
+- `/`: Focus Search bar
 - `i`: Switch to Info
 - `Ctrl+L`: Open Command Palette (Theme picker)
 - `q`: Quit the application (with confirmation)
+
+#### Trading (New Tokens View)
+- `b`: Switch to Buy mode
+- `s`: Switch to Sell mode
+- `e`: Execute trade
+- `c`: Copy Contract Address to clipboard
+- `o`: Open token on pump.fun in browser
+- `Enter`: Select token for Trade Panel
+
+#### Sorting (New Tokens View)
+- `m`: Sort by Market Cap
+- `v`: Sort by Volume
+- `l`: Reset to Live sort (newest first)
 
 ## Troubleshooting
 
 - **Stream Error**: If you see connection errors, check your internet connection or try restarting the app.
 - **Logs**: Debug logs are written to `debug_stream.log` and `error.log`.
+
+---
+
+## Support & Contributions
+
+If you find pumpTUI useful, consider supporting the project:
+
+🪙 **Token**: [$pumpTUI](https://pump.fun/coin/3rJip4AWxjhgZFNNwzWcschF52gHx1ogGBzaQ9UGpump)  
+💰 **Sol Wallet**: `HDsYhpxoq3AnXbmoXhan7Dor72hwsXVuBfX2BtCDy7dJ`
+

@@ -3,6 +3,7 @@ import json
 import psutil
 import csv
 import os
+import webbrowser
 from datetime import datetime
 from textual.app import App, ComposeResult
 from textual.theme import Theme
@@ -173,6 +174,8 @@ class PumpApp(App):
         Binding("b", "trade_buy", "Buy (b)"),
         Binding("s", "trade_sell", "Sell (s)"),
         Binding("e", "trade_execute", "Execute (e)"),
+        Binding("c", "copy_ca", "Copy CA (c)"),
+        Binding("o", "open_in_browser", "Open (o)"),
         Binding("enter", "select_token_action", "Select", show=True),
     ]
     
@@ -454,7 +457,8 @@ class PumpApp(App):
                 # User wants global B/S hotkeys in this view
                 self.bind("b", "trade_buy", description="Buy (b)", show=True)
                 self.bind("s", "trade_sell", description="Sell (s)", show=True)
-                self.bind("c", "copy_ca", description="Copy CA", show=True)
+                self.bind("c", "copy_ca", description="Copy CA (c)", show=True)
+                self.bind("o", "open_in_browser", description="Open (o)", show=True)
                 self.bind("ctrl+shift+c", "copy_ca", show=False)
                 
             except: pass
@@ -550,58 +554,100 @@ class PumpApp(App):
     async def action_copy_ca(self) -> None:
         """Copy the selected token's contract address to clipboard without blocking."""
         try:
-            tab_content = self.query_one(TabbedContent)
-            if tab_content.active == "new":
-                token_table = self.query_one("#table_new", TokenTable)
-                selected_token = token_table.get_selected_token()
-                
-                if not selected_token:
-                    self.notify("Select a token first.", variant="warning")
-                    return
+            ca = None
+            
+            # First, try to get CA from Trade Panel (takes priority if loaded)
+            try:
+                panel = self.query_one("#trade_panel_view", TradePanel)
+                if panel.token_data and panel.token_data.get("mint"):
+                    ca = str(panel.token_data.get("mint", "")).strip()
+            except:
+                pass
+            
+            # Fallback: Get from TokenTable if in New Tokens tab
+            if not ca:
+                tab_content = self.query_one(TabbedContent)
+                if tab_content.active == "new":
+                    token_table = self.query_one("#table_new", TokenTable)
+                    selected_token = token_table.get_selected_token()
+                    if selected_token:
+                        ca = str(selected_token.get("mint", "")).strip()
+            
+            if not ca:
+                self.notify("Select a token first.", severity="warning")
+                return
 
-                ca = str(selected_token.get("mint", "")).strip()
-                if not ca: return
+            # Step 1: OSC 52 (Terminal clipboard escape sequence)
+            try:
+                import base64
+                enc = base64.b64encode(ca.encode()).decode()
+                self.console.file.write(f"\033]52;c;{enc}\a")
+                self.console.file.flush()
+            except: pass
 
-                # Step 1: OSC 52
+            # Step 2: System commands (Async)
+            targets = []
+            if os.getenv("WAYLAND_DISPLAY"): 
+                targets.append(['wl-copy'])
+            if os.getenv("DISPLAY"): 
+                targets.append(['xclip', '-selection', 'clipboard'])
+                targets.append(['xclip', '-selection', 'primary'])
+                targets.append(['xsel', '-ib'])
+            targets.append(['pbcopy'])
+
+            success = False
+            for cmd in targets:
                 try:
-                    import base64
-                    enc = base64.b64encode(ca.encode()).decode()
-                    self.console.file.write(f"\033]52;c;{enc}\a")
-                    self.console.file.flush()
-                except: pass
+                    proc = await asyncio.create_subprocess_exec(
+                        *cmd,
+                        stdin=asyncio.subprocess.PIPE,
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.DEVNULL
+                    )
+                    await asyncio.wait_for(proc.communicate(input=ca.encode()), timeout=1.0)
+                    if proc.returncode == 0:
+                        success = True
+                        break
+                except: continue
 
-                # Step 2: System commands (Async)
-                import os
-                targets = []
-                if os.getenv("WAYLAND_DISPLAY"): 
-                    targets.append(['wl-copy'])
-                if os.getenv("DISPLAY"): 
-                    targets.append(['xclip', '-selection', 'clipboard'])
-                    targets.append(['xclip', '-selection', 'primary'])
-                    targets.append(['xsel', '-ib'])
-                targets.append(['pbcopy'])
-
-                success = False
-                for cmd in targets:
-                    try:
-                        proc = await asyncio.create_subprocess_exec(
-                            *cmd,
-                            stdin=asyncio.subprocess.PIPE,
-                            stdout=asyncio.subprocess.DEVNULL,
-                            stderr=asyncio.subprocess.DEVNULL
-                        )
-                        await asyncio.wait_for(proc.communicate(input=ca.encode()), timeout=1.0)
-                        if proc.returncode == 0:
-                            success = True
-                            break
-                    except: continue
-
-                if success:
-                    self.notify(f"CA Copied: {ca[:8]}...", severity="information")
-                else:
-                    self.notify(f"Clipboard restricted. CA: {ca}", timeout=10)
+            if success:
+                self.notify(f"CA Copied: {ca[:8]}...", severity="information")
+            else:
+                self.notify(f"Clipboard restricted. CA: {ca}", timeout=10)
         except Exception as e:
             self.notify(f"Copy Error: {e}", severity="error")
+
+    async def action_open_in_browser(self) -> None:
+        """Open the selected token on pump.fun in the default browser."""
+        try:
+            ca = None
+            
+            # First, try to get CA from Trade Panel
+            try:
+                panel = self.query_one("#trade_panel_view", TradePanel)
+                if panel.token_data and panel.token_data.get("mint"):
+                    ca = str(panel.token_data.get("mint", "")).strip()
+            except:
+                pass
+            
+            # Fallback: Get from TokenTable if in New Tokens tab
+            if not ca:
+                tab_content = self.query_one(TabbedContent)
+                if tab_content.active == "new":
+                    token_table = self.query_one("#table_new", TokenTable)
+                    selected_token = token_table.get_selected_token()
+                    if selected_token:
+                        ca = str(selected_token.get("mint", "")).strip()
+            
+            if not ca:
+                self.notify("Select a token first.", severity="warning")
+                return
+            
+            url = f"https://pump.fun/{ca}"
+            webbrowser.open(url)
+            self.notify(f"Opened: pump.fun/{ca[:8]}...", severity="information")
+        except Exception as e:
+            self.notify(f"Browser Error: {e}", severity="error")
 
 
     async def stream_tokens(self) -> None:
