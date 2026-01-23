@@ -134,8 +134,8 @@ class CandleChart(Widget):
         for i in range(remaining):
             for y in range(self.chart_height):
                 char = " "
-                # Draw arrow in top right (y=1, 2nd column from right)
-                if self.last_trend and y == 1 and i == remaining - 2:
+                # Draw arrow in top right (y=5, last column)
+                if self.last_trend and y == 5 and i == remaining - 1:
                     if self.last_trend == "up":
                         char = "[green]▲[/]"
                     elif self.last_trend == "down":
