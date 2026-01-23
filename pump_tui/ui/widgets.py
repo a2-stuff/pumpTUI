@@ -7,8 +7,8 @@ from rich.text import Text
 from rich.markup import escape
 from typing import Callable, Awaitable, List, Dict, Any, Optional
 import asyncio
-import time
-import httpx
+import math
+import re
 from datetime import datetime
 from ..config import config
 from .image_utils import fetch_token_metadata
@@ -1580,13 +1580,15 @@ class TradePanel(Container):
     def update_estimation(self) -> None:
         try:
             amount_str = self.query_one("#amount_input", Input).value.strip()
+            label = self.query_one("#estimated_amount", Label)
+            
             if not amount_str: 
-                self.query_one("#estimated_amount", Label).update("")
+                label.update("")
                 return
             
             mc_sol = self.token_data.get("marketCapSol", 0)
             if mc_sol <= 0: 
-                self.query_one("#estimated_amount", Label).update("Waiting for MC...")
+                label.update("Waiting for price...")
                 return
 
             price_sol = mc_sol / 1_000_000_000
@@ -1594,23 +1596,25 @@ class TradePanel(Container):
             if self.trade_mode == "buy":
                 try:
                     sol_in = float(amount_str)
-                    tokens_out = sol_in / price_sol
-                    self.query_one("#estimated_amount", Label).update(f"~ {tokens_out:,.0f} Tokens")
+                    if price_sol > 0:
+                        tokens_out = sol_in / price_sol
+                        label.update(f"Estimated ~ {tokens_out:,.0f} Tokens")
+                    else:
+                        label.update("Price Error")
                 except ValueError:
-                     self.query_one("#estimated_amount", Label).update("Invalid")
+                     label.update("Invalid Amount")
             else:
-                # Sell Mode: amount_str is like "50%" or "100%"
-                # Clean it
+                # Sell Mode
                 clean_val = amount_str.replace("%", "").strip()
                 try:
                     percent = float(clean_val)
-                    # We can't estimate SOL out without knowing user balance of tokens.
-                    # But we can display "Selling X%"
-                    self.query_one("#estimated_amount", Label).update(f"Selling {percent}%")
+                    label.update(f"Selling ~ {percent}%")
                 except ValueError:
-                    self.query_one("#estimated_amount", Label).update("Invalid")
+                    label.update("")
         except Exception:
-            self.query_one("#estimated_amount", Label).update("")
+            try:
+                self.query_one("#estimated_amount", Label).update("")
+            except: pass
 
     # --- Actions ---
     
@@ -1624,31 +1628,41 @@ class TradePanel(Container):
             self.action_execute_trade()
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        if event.input.id == "amount_input":
-             # Auto-format for Sell mode
-             if self.trade_mode == "sell":
-                 val = event.value
-                 
-                 # Cap at 100%
-                 clean_val = val.replace("%", "").strip()
-                 try:
-                     if clean_val and float(clean_val) > 100:
-                         with self.prevent(Input.Changed):
-                             event.input.value = "100%"
-                             val = "100%" # Update local val for logic below
-                 except ValueError:
-                     pass
+        if event.input.id != "amount_input":
+            return
 
-                 if val and not val.endswith("%"):
-                     # Avoid recursion loop if we change value
-                     with self.prevent(Input.Changed):
-                         event.input.value = val + "%"
-                         # Move cursor to end - 1 (before %) ? Textual input handles cursor?
-                         # Usually just appending works but cursor might jump.
-                         # Simpler: Just rely on update_estimation handling it, but user asked for auto-add.
-                         # If we modify input value here, cursor moves to end.
+        val = event.value
+        
+        if self.trade_mode == "buy":
+            # Allow numbers and decimals only
+            sanitized = "".join([c for c in val if c.isdigit() or c == "."])
+            # Ensure only one dot
+            if sanitized.count(".") > 1:
+                parts = sanitized.split(".")
+                sanitized = parts[0] + "." + "".join(parts[1:])
+            
+            if val != sanitized:
+                 with self.prevent(Input.Changed):
+                     event.input.value = sanitized
+                     val = sanitized # Update for estimation
+                     
+        elif self.trade_mode == "sell":
+            # Allow numbers only, format with %
+            digits = "".join([c for c in val if c.isdigit()])
+            
+            if digits:
+                # Cap at 100
+                if int(digits) > 100: digits = "100"
+                formatted = f"{digits}%"
+            else:
+                formatted = ""
+                
+            if val != formatted:
+                with self.prevent(Input.Changed):
+                    event.input.value = formatted
+                    val = formatted
              
-             self.update_estimation()
+        self.update_estimation()
 
     def action_execute_trade(self):
         # Validation
