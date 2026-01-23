@@ -134,12 +134,20 @@ class CandleChart(Widget):
         for i in range(remaining):
             for y in range(self.chart_height):
                 char = " "
-                # Draw arrow in top right (y=5, last column)
-                if self.last_trend and y == 5 and i == remaining - 1:
-                    if self.last_trend == "up":
-                        char = "[green]▲[/]"
-                    elif self.last_trend == "down":
-                        char = "[red]▼[/]"
+                # Draw arrows in top right (y=5 and y=6, last column)
+                if self.last_trend and i == remaining - 1:
+                    if y == 5:
+                        arrow = "▲" if self.last_trend == "up" else "▼"
+                        color = "green" if self.last_trend == "up" else "red"
+                        # Blink top arrow on Buy
+                        style = "blink" if self.last_trend == "up" else ""
+                        char = f"[{color} {style}]{arrow}[/]"
+                    elif y == 6:
+                        arrow = "▲" if self.last_trend == "up" else "▼"
+                        color = "green" if self.last_trend == "up" else "red"
+                        # Blink bottom arrow on Sell
+                        style = "blink" if self.last_trend == "down" else ""
+                        char = f"[{color} {style}]{arrow}[/]"
                 lines[y] += char
 
         return Text.from_markup("\n".join(lines))
