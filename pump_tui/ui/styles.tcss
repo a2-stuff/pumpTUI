@@ -1,3 +1,9 @@
+/*
+ * Dolphine Theme (Default)
+ * Inspired by Dolphie - oceanic blue color palette
+ * Created: 2026-01-22
+ */
+
 /* Global Styles */
 Screen {
     background: #11111b; /* Dark background */

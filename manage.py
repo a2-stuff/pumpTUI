@@ -10,6 +10,32 @@ def start(use_docker=False):
     else:
         start_local()
 
+def check_dependencies(python_exec):
+    """Check if critical dependencies are installed."""
+    print("Checking dependencies...")
+    required = ["textual", "motor", "websockets", "httpx", "psutil", "rich"]
+    missing = []
+    
+    for pkg in required:
+        try:
+            subprocess.run(
+                [python_exec, "-c", f"import {pkg}"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=True
+            )
+        except subprocess.CalledProcessError:
+            missing.append(pkg)
+    
+    if missing:
+        print(f"❌ Missing dependencies: {', '.join(missing)}")
+        print(f"\n💡 Install with: pip install {' '.join(missing)}")
+        print("   Or: poetry install")
+        return False
+    
+    print("✅ All dependencies installed")
+    return True
+
 def start_local():
     """Start the app locally."""
     print("Starting pumpTUI...")
@@ -23,6 +49,10 @@ def start_local():
         python_exec = venv_python
     else:
         print(f"Using System Python: {python_exec}")
+    
+    # Check dependencies
+    if not check_dependencies(python_exec):
+        sys.exit(1)
 
     try:
         # Run the app's main entry point
