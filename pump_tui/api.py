@@ -1,7 +1,9 @@
 import json
 import asyncio
 import websockets
+import httpx
 from typing import AsyncGenerator, Dict, Any, Optional
+from .helpers import get_http_client
 
 class PumpPortalClient:
     URI = "wss://pumpportal.fun/api/data"
@@ -50,19 +52,17 @@ class PumpPortalClient:
 
     async def create_wallet(self) -> Dict[str, str]:
         """Generate a new wallet via PumpPortal API."""
-        import httpx
         url = "https://pumpportal.fun/api/create-wallet"
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url)
-            if response.status_code == 200:
-                # Returns: {"apiKey": "...", "privateKey": "...", "walletPublicKey": "..."}
-                return response.json()
-            else:
-                raise Exception(f"Failed to create wallet: {response.text}")
+        client = get_http_client()
+        response = await client.get(url)
+        if response.status_code == 200:
+            # Returns: {"apiKey": "...", "privateKey": "...", "walletPublicKey": "..."}
+            return response.json()
+        else:
+            raise Exception(f"Failed to create wallet: {response.text}")
 
     async def get_sol_balance(self, public_key: str) -> float:
         """Get SOL balance via RPC."""
-        import httpx
         from .config import config
         rpc_url = config.rpc_url
         
@@ -73,24 +73,23 @@ class PumpPortalClient:
             "params": [public_key]
         }
         
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            try:
-                response = await client.post(rpc_url, json=payload)
-                if response.status_code == 200:
-                    data = response.json()
-                    if "result" in data and "value" in data["result"]:
-                        lamports = data["result"]["value"]
-                        return lamports / 1_000_000_000
-            except:
-                pass
-            return 0.0
+        client = get_http_client()
+        try:
+            response = await client.post(rpc_url, json=payload)
+            if response.status_code == 200:
+                data = response.json()
+                if "result" in data and "value" in data["result"]:
+                    lamports = data["result"]["value"]
+                    return lamports / 1_000_000_000
+        except:
+            pass
+        return 0.0
 
     async def get_batch_balances(self, public_keys: list[str]) -> Dict[str, float]:
         """Get SOL balances for multiple wallets in one RPC call."""
         if not public_keys:
             return {}
             
-        import httpx
         from .config import config
         rpc_url = config.rpc_url
         
@@ -106,31 +105,30 @@ class PumpPortalClient:
             })
             
         results = {}
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            try:
-                response = await client.post(rpc_url, json=batch_payload)
-                if response.status_code == 200:
-                    data = response.json()
-                    # data is a list of responses corresponding to requests
-                    if isinstance(data, list):
-                        for res in data:
-                            req_id = res.get("id")
-                            if req_id is not None and 0 <= req_id < len(public_keys):
-                                pub = public_keys[req_id]
-                                if "result" in res and "value" in res["result"]:
-                                    lamports = res["result"]["value"]
-                                    results[pub] = lamports / 1_000_000_000
-                                else:
-                                    results[pub] = 0.0
-            except Exception as e:
-                print(f"Batch balance error: {e}")
-                pass
+        client = get_http_client()
+        try:
+            response = await client.post(rpc_url, json=batch_payload)
+            if response.status_code == 200:
+                data = response.json()
+                # data is a list of responses corresponding to requests
+                if isinstance(data, list):
+                    for res in data:
+                        req_id = res.get("id")
+                        if req_id is not None and 0 <= req_id < len(public_keys):
+                            pub = public_keys[req_id]
+                            if "result" in res and "value" in res["result"]:
+                                lamports = res["result"]["value"]
+                                results[pub] = lamports / 1_000_000_000
+                            else:
+                                results[pub] = 0.0
+        except Exception as e:
+            print(f"Batch balance error: {e}")
+            pass
                 
         return results
 
     async def get_tx_count(self, public_key: str) -> int:
         """Get transaction count for a wallet."""
-        import httpx
         from .config import config
         rpc_url = config.rpc_url
         
@@ -141,16 +139,16 @@ class PumpPortalClient:
             "params": [public_key, {"limit": 1000}]
         }
         
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            try:
-                response = await client.post(rpc_url, json=payload)
-                if response.status_code == 200:
-                    data = response.json()
-                    if "result" in data:
-                        return len(data["result"])
-            except:
-                pass
-            return 0
+        client = get_http_client()
+        try:
+            response = await client.post(rpc_url, json=payload)
+            if response.status_code == 200:
+                data = response.json()
+                if "result" in data:
+                    return len(data["result"])
+        except:
+            pass
+        return 0
 
     async def listen(self) -> AsyncGenerator[Dict[str, Any], None]:
         """Yield messages from the WebSocket."""

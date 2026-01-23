@@ -12,9 +12,19 @@ import httpx
 import asyncio
 
 from ..config import config
+from .widgets import TradeInput
 
 class SettingsView(VerticalScroll):
     can_focus = True
+    
+    def on_mount(self):
+        asyncio.create_task(self._load_token())
+        
+    async def _load_token(self):
+        from ..database import db
+        token = await db.get_setting("api_token")
+        if token:
+            self.query_one("#api_token", Input).value = str(token)
     def compose(self) -> ComposeResult:
         yield Label("Settings", classes="title")
         
@@ -96,8 +106,9 @@ class SettingsView(VerticalScroll):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save_token":
             token = self.query_one("#api_token", Input).value
-            # In a real app, save this to a config file.
-            self.app.notify("Token saved (in memory only)!")
+            from ..database import db
+            asyncio.create_task(db.save_setting("api_token", token, encrypt=True))
+            self.app.notify("Token saved to Database!")
             
         elif event.button.id == "save_colors":
             try:
@@ -123,7 +134,7 @@ class SettingsView(VerticalScroll):
                 )
                 self.app.notify("Coloring thresholds saved!")
             except ValueError:
-                self.app.notify("Error: Please enter valid numbers.", variant="error")
+                self.app.notify("Error: Please enter valid numbers.", severity="error")
         
         elif event.button.id == "save_rpc":
             rpc_url = self.query_one("#rpc_url", Input).value.strip()
@@ -131,7 +142,7 @@ class SettingsView(VerticalScroll):
                 config.update_rpc(rpc_url)
                 self.app.notify("RPC URL saved!")
             else:
-                self.app.notify("Error: RPC URL cannot be empty.", variant="error")
+                self.app.notify("Error: RPC URL cannot be empty.", severity="error")
         
         elif event.button.id == "save_theme":
             theme = self.query_one("#theme_select", Select).value
@@ -152,7 +163,7 @@ class SettingsView(VerticalScroll):
                 config.update_trading_defaults(slippage, priority_fee)
                 self.app.notify("Trading defaults saved!")
             except ValueError:
-                self.app.notify("Error: Please enter valid numbers.", variant="error")
+                self.app.notify("Error: Please enter valid numbers.", severity="error")
 
 class InfoView(Container):
     can_focus = True
@@ -160,7 +171,7 @@ class InfoView(Container):
 # PumpTUI
 **A Textual TUI for Pump.fun**
 
-Version: 1.1.8
+Version: 1.1.9
 Created by: @not_jarod
 
 ## Features
@@ -243,10 +254,10 @@ class ShutdownScreen(Screen):
     DEFAULT_CSS = """
     ShutdownScreen {
         align: center middle;
-        background: #1e1e2e;
+        background: $background;
     }
     Label {
-        color: #f38ba8;
+        color: $error;
         text-style: bold;
     }
     """
@@ -259,10 +270,10 @@ class StartupScreen(Screen):
     DEFAULT_CSS = """
     StartupScreen {
         align: center middle;
-        background: #1e1e2e;
+        background: $background;
     }
     .logo {
-        color: #89b4fa;
+        color: $primary;
         text-style: bold;
         padding-bottom: 2;
         content-align: center middle;
@@ -270,9 +281,9 @@ class StartupScreen(Screen):
     #startup-log {
         width: 60;
         height: auto;
-        border: solid #313244;
+        border: solid $surface-lighten-1;
         padding: 1 2;
-        background: #181825;
+        background: $panel;
     }
     #startup-log Label {
         width: 100%;
@@ -337,22 +348,22 @@ class TradeModal(ModalScreen):
     #trade_dialog {
         width: 60;
         height: auto;
-        background: #1e1e2e;
-        border: thick #89b4fa;
+        background: $surface;
+        border: thick $primary;
         padding: 1 2;
     }
     
     #trade_title {
         text-align: center;
         text-style: bold;
-        color: #89b4fa;
+        color: $primary;
         margin-bottom: 1;
     }
     
     #token_info {
         text-align: center;
         margin-bottom: 1;
-        color: #a6adc8;
+        color: $secondary;
     }
 
     .spacer {
@@ -396,7 +407,7 @@ class TradeModal(ModalScreen):
         width: 15;
         content-align: right middle;
         padding-right: 1;
-        color: #cdd6f4;
+        color: $foreground;
     }
     
     .input_field {
@@ -525,8 +536,8 @@ class TradeModal(ModalScreen):
             
             # Amount input
             with Horizontal(classes="input_row"):
-                yield Label("Amount:", classes="input_label")
-                yield Input(value="1.0", id="amount_input", classes="input_field", restrict=r"^[0-9.]*%?$")
+                yield Label("[b][#89b4fa]Amount:[/][/]", classes="input_label")
+                yield TradeInput(value="1.0", id="amount_input", classes="input_field", restrict=r"^[0-9.]*%?$")
             
             # Denomination label
             yield Label("(SOL for buy, Tokens or % for sell)", id="denom_label", classes="input_label")
@@ -905,19 +916,19 @@ class TradeModal(ModalScreen):
                 try:
                     sol_in = float(amount_str)
                     tokens_out = sol_in / price_sol
-                    self.query_one("#estimated_amount", Label).update(f"Est. Tokens: {tokens_out:,.2f}")
+                    self.query_one("#estimated_amount", Label).update(Text.from_markup(f"[b][#89b4fa]Est:[/][/] {tokens_out:,.2f} Tokens"))
                 except ValueError:
                     self.query_one("#estimated_amount", Label).update("")
             
             else: # Sell
                 # Input is Tokens (or %) -> Calculate SOL
                 if amount_str.endswith("%"):
-                    self.query_one("#estimated_amount", Label).update("Selling percentage of holdings")
+                    self.query_one("#estimated_amount", Label).update(Text.from_markup(f"[b][#89b4fa]Est:[/][/] Selling percentage"))
                 else:
                     try:
                         tokens_in = float(amount_str)
                         sol_out = tokens_in * price_sol
-                        self.query_one("#estimated_amount", Label).update(f"Est. SOL: {sol_out:.4f}")
+                        self.query_one("#estimated_amount", Label).update(Text.from_markup(f"[b][#89b4fa]Est:[/][/] {sol_out:.4f} SOL"))
                     except ValueError:
                         self.query_one("#estimated_amount", Label).update("")
         except Exception:

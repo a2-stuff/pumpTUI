@@ -6,6 +6,9 @@ async def fetch_token_metadata(uri: str) -> Optional[Dict[str, Any]]:
     if not uri:
         return None
     
+    from ..helpers import get_http_client
+    client = get_http_client()
+    
     # Extract CID if it's an IPFS link
     cid = None
     if "/ipfs/" in uri:
@@ -15,8 +18,6 @@ async def fetch_token_metadata(uri: str) -> Optional[Dict[str, Any]]:
 
     if cid:
         # Multiple gateways to try if Pinata is ratelimited (429)
-        # Multiple gateways to utilize public infrastructure
-        # Pinata often rate limits free tiers, so we prioritize others
         gateways = [
             f"https://cf-ipfs.com/ipfs/{cid}",
             f"https://dweb.link/ipfs/{cid}",
@@ -26,27 +27,25 @@ async def fetch_token_metadata(uri: str) -> Optional[Dict[str, Any]]:
         ]
         
         last_error = "Unknown error"
-        async with httpx.AsyncClient() as client:
-            for gw_url in gateways:
-                try:
-                    response = await client.get(gw_url, timeout=7.0, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0"})
-                    if response.status_code == 200:
-                        return response.json()
-                    elif response.status_code == 429:
-                        last_error = "429 Rate Limited"
-                        continue # Try next gateway
-                    else:
-                        last_error = f"HTTP {response.status_code}"
-                except Exception as e:
-                    last_error = str(e)
-                    continue
+        for gw_url in gateways:
+            try:
+                response = await client.get(gw_url, timeout=7.0, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0"})
+                if response.status_code == 200:
+                    return response.json()
+                elif response.status_code == 429:
+                    last_error = "429 Rate Limited"
+                    continue # Try next gateway
+                else:
+                    last_error = f"HTTP {response.status_code}"
+            except Exception as e:
+                last_error = str(e)
+                continue
         return {"error": f"All gateways failed: {last_error}"}
 
     # Regular URL fetch
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(uri, timeout=10.0, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0"})
-            response.raise_for_status()
-            return response.json()
+        response = await client.get(uri, timeout=10.0, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0"})
+        response.raise_for_status()
+        return response.json()
     except Exception as e:
         return {"error": str(e)}

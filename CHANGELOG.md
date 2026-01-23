@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.1.9] - 2026-01-22
+
+### Added
+- **Docker Performance Overhaul**: 
+  - Switched from Alpine to Debian Slim (`glibc`) for native-tier Python execution speed and UI responsiveness.
+- **Global Connection Pooling**: Unified all network requests (Trades, RPC, Metadata) under a single shared HTTP pool to eliminate SSL handshake overhead.
+- **Encryption Key Generator**: Added `--encryption-key` flag to `manage.py` to generate a secure `SETTINGS_ENCRYPTION_KEY` for database encryption.
+- **Project Stack Name**: Added `-p pumpTUI` to all Docker Compose commands for consistent container naming and isolation.
+- **Persistent API Token**: Settings screen now saves the API Token securely to MongoDB (encrypted if key is present).
+- **Docker TrueColor Support**: Added `COLORTERM=truecolor` support in Docker for accurate theme rendering.
+- **Theme Persistence**: Selected themes are now automatically saved to the database and persist across restarts.
+
+### Changed
+- **Trading UX**: Hotkeys `b` (Buy) and `s` (Sell) now work flawlessly even when focused on the amount input field.
+- **UI Refinement**: Added 1-line padding between the token table scrollbar and the vertical divider for better visual clarity.
+- **Hotkey Conflict Fix**: Changed Command Palette hotkey from `Ctrl+P` to `Ctrl+L` to avoid conflicts with Docker's detach sequence.
+- **Trading Defaults**: Set the default Sell amount to 100% for faster execution.
+
+### Fixed
+- **Docker Trading Crash**: Fixed "TradingClient is not defined" error and ensured the Execute button label resets correctly on failure.
+- **Trade Execution Speed**: Optimized transaction creation by loading `TradingClient` at app-level and warmed-up imports.
+- **PumpPortal API**: Fixed "Bad Request" (400) error by ensuring `denominatedInSol` is sent as a boolean.
+- **Dependency Issues**: Added `solana` and `solders` to Dockerfile to resolve transaction errors in containers.
+- **Notification API**: Corrected `notify()` calls to use `severity` instead of `variant`.
+
+### Removed
+- **CSV Logging**: Completely removed file-based CSV token logging in favor of centralized MongoDB storage.
+- **File Wallets**: Removed `wallets.json` support. All wallets are now stored securely and exclusively in the database.
+
 ## [v1.1.8] - 2026-01-22
 
 ### Added

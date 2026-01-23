@@ -1,7 +1,7 @@
 # pumpTUI
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Version](https://img.shields.io/badge/version-1.1.8-orange.svg)
+![Version](https://img.shields.io/badge/version-1.1.9-orange.svg)
 ![Solana](https://img.shields.io/badge/Solana-Data%20Stream-black.svg?logo=solana)
 
 pumpTUI is a Terminal User Interface (TUI) application for viewing and tracking tokens on Pump.fun directly from your terminal. It provides real-time updates, detailed token information, and wallet tracking capabilities.
@@ -17,7 +17,7 @@ pumpTUI is a Terminal User Interface (TUI) application for viewing and tracking 
 - **Wallet Tracking**: Monitor specific wallets and their activities.
 - **Interactive TUI**: Fully keyboard-navigable interface built with Textual.
 - **System Stats**: View CPU, Memory usage, Network Latency, and Token Velocity (tpm).
-- **Data Persistence**: Automatically logs new token data to daily CSV files.
+- **Data Persistence**: Centralized MongoDB storage for all tokens, wallets, and configuration.
 - **Visual Feedback**: Smooth startup and shutdown animations.
 
 ## Installation
@@ -38,8 +38,11 @@ pumpTUI can be deployed in two ways: **Docker** (recommended, zero dependencies)
 
 2.  **Configure environment:**
     ```bash
-    cp .env.example .env
-    # Edit .env with your API key and settings (see Configuration section)
+    # Generate a secure encryption key for your wallets
+    python3 manage.py --encryption-key
+    
+    # Configure your API key and settings
+    nano .env
     ```
 
 3.  **Start the application:**
@@ -135,8 +138,11 @@ python3 manage.py clean --docker
 
 5.  **Configure environment:**
     ```bash
-    cp .env.example .env
+    # Generate encryption key
+    python3 manage.py --encryption-key
+    
     # Edit .env with your settings
+    nano .env
     ```
 
 #### Standalone Commands
@@ -173,6 +179,9 @@ Environment variables are managed via `.env` in the root directory:
     
     # MongoDB Connection (Docker auto-configures this)
     MONGO_URI=mongodb://localhost:27017
+    
+    # Encryption key for secure wallet storage (Generate with: python3 manage.py --encryption-key)
+    SETTINGS_ENCRYPTION_KEY=your_generated_key_here
     ```
 
 3.  **Optional Trading Defaults:**
@@ -195,7 +204,7 @@ To use **Buy** and **Sell** functions:
 4.  **Set Active**: Check the box next to your wallet to mark it active `[X]`
 5.  **Trade**: Press `b` on any token to open the trade modal
 
-> **Security**: Wallets are stored encrypted in MongoDB (Docker) or locally (Standalone)
+> **Security**: Wallets are stored encrypted in MongoDB using the `SETTINGS_ENCRYPTION_KEY`.
 
 ---
 
@@ -224,7 +233,7 @@ python3 manage.py start
 - `x`: Switch to Settings
 - `s`: Focus Search bar
 - `i`: Switch to Info
-- `r`: Refresh Data (Note: Streaming updates automatically)
+- `Ctrl+L`: Open Command Palette (Theme picker)
 - `q`: Quit the application (with confirmation)
 
 ## Troubleshooting

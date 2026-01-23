@@ -152,7 +152,7 @@ def start_docker():
             print("\nDetached from session. App is still running.")
     elif container_status.startswith("Exited") or container_status.startswith("Created"):
         print("🔄 Starting existing containers...")
-        result = subprocess.run(docker_prefix + ["docker-compose", "start"])
+        result = subprocess.run(docker_prefix + ["docker-compose", "-p", "pumpTUI", "start"])
         if result.returncode == 0:
             print("✅ PumpTUI is running!")
             print("🔗 Attaching to session...")
@@ -173,7 +173,7 @@ def start_docker():
         else:
             print("❌ Failed to start containers.")
             cmd_prefix = "sudo " if docker_prefix else ""
-            print(f"Check logs with: {cmd_prefix}docker-compose logs")
+            print(f"Check logs with: {cmd_prefix}docker-compose -p pumpTUI logs")
             sys.exit(1)
     else:
         # No existing container or image needs building
@@ -184,14 +184,14 @@ def start_docker():
         
         # Remove any old containers with stale image references
         subprocess.run(
-            docker_prefix + ["docker-compose", "rm", "-f"],
+            docker_prefix + ["docker-compose", "-p", "pumpTUI", "rm", "-f"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
         
         # Build and start
         build_flag = ["--build"] if not image_exists else []
-        result = subprocess.run(docker_prefix + ["docker-compose", "up", "-d"] + build_flag)
+        result = subprocess.run(docker_prefix + ["docker-compose", "-p", "pumpTUI", "up", "-d"] + build_flag)
         
         if result.returncode == 0:
             print("✅ PumpTUI is running!")
@@ -217,7 +217,7 @@ def start_docker():
         else:
             print("❌ Failed to start containers.")
             cmd_prefix = "sudo " if docker_prefix else ""
-            print(f"Check logs with: {cmd_prefix}docker-compose logs")
+            print(f"Check logs with: {cmd_prefix}docker-compose -p pumpTUI logs")
             sys.exit(1)
 
 def stop(use_docker=False):
@@ -251,7 +251,7 @@ def stop_docker():
     except subprocess.CalledProcessError:
         docker_prefix = ["sudo"]
     
-    result = subprocess.run(docker_prefix + ["docker-compose", "stop"])
+    result = subprocess.run(docker_prefix + ["docker-compose", "-p", "pumpTUI", "stop"])
     
     if result.returncode == 0:
         print("✅ Containers stopped successfully.")
@@ -281,13 +281,13 @@ def rebuild_docker():
                 sys.exit(1)
     
     print("📦 Stopping containers...")
-    subprocess.run(docker_prefix + ["docker-compose", "stop"])
+    subprocess.run(docker_prefix + ["docker-compose", "-p", "pumpTUI", "stop"])
     
     print("🗑️  Removing old containers...")
-    subprocess.run(docker_prefix + ["docker-compose", "rm", "-f"])
+    subprocess.run(docker_prefix + ["docker-compose", "-p", "pumpTUI", "rm", "-f"])
     
     print("🔨 Building new image...")
-    result = subprocess.run(docker_prefix + ["docker-compose", "build", "--no-cache"])
+    result = subprocess.run(docker_prefix + ["docker-compose", "-p", "pumpTUI", "build", "--no-cache"])
     
     if result.returncode == 0:
         print("✅ Rebuild complete!")
@@ -315,16 +315,51 @@ def clean_docker():
         docker_prefix = ["sudo"]
     
     print("🗑️  Removing containers and volumes...")
-    subprocess.run(docker_prefix + ["docker-compose", "down", "-v"])
+    subprocess.run(docker_prefix + ["docker-compose", "-p", "pumpTUI", "down", "-v"])
     
     # Also remove the built image
     subprocess.run(docker_prefix + ["docker", "rmi", "pumptui:latest"], capture_output=True)
     
     print("✅ Cleanup complete. All Docker resources removed.")
 
+def generate_encryption_key():
+    """Generate a Fernet-compatible encryption key."""
+    import base64
+    import os
+    key = base64.urlsafe_b64encode(os.urandom(32)).decode()
+    print("\n🔑 Generated Encryption Key:")
+    print(f"\033[1;32m{key}\033[0m")
+    print("\n💡 Copy this to your .env file as:")
+    print(f"SETTINGS_ENCRYPTION_KEY={key}")
+    
+    confirm = input("\nWould you like to add this to your .env file now? (yes/no): ")
+    if confirm.lower() == "yes":
+        env_path = ".env"
+        lines = []
+        if os.path.exists(env_path):
+            with open(env_path, "r") as f:
+                lines = f.readlines()
+        
+        # Check if key already exists
+        found = False
+        new_lines = []
+        for line in lines:
+            if line.startswith("SETTINGS_ENCRYPTION_KEY="):
+                new_lines.append(f"SETTINGS_ENCRYPTION_KEY={key}\n")
+                found = True
+            else:
+                new_lines.append(line)
+        
+        if not found:
+            new_lines.append(f"\n# Encryption key for secure local storage\nSETTINGS_ENCRYPTION_KEY={key}\n")
+            
+        with open(env_path, "w") as f:
+            f.writelines(new_lines)
+        print("✅ .env file updated!")
+
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python3 manage.py [start|stop|rebuild|clean] [--docker]")
+        print("Usage: python3 manage.py [start|stop|rebuild|clean] [--docker] [--encryption-key]")
         sys.exit(1)
     
     cmd = sys.argv[1].lower()
@@ -346,10 +381,16 @@ def main():
         else:
             print("The 'clean' command is only available with --docker flag.")
             print("Usage: python3 manage.py clean --docker")
+    elif cmd == "--encryption-key":
+        generate_encryption_key()
     else:
-        print(f"Unknown command: {cmd}")
-        print("Usage: python3 manage.py [start|stop|rebuild|clean] [--docker]")
-        sys.exit(1)
+        # Check if flag exists anywhere else (e.g. manage.py --encryption-key)
+        if "--encryption-key" in sys.argv:
+            generate_encryption_key()
+        else:
+            print(f"Unknown command: {cmd}")
+            print("Usage: python3 manage.py [start|stop|rebuild|clean] [--docker] [--encryption-key]")
+            sys.exit(1)
 
 if __name__ == "__main__":
     main()

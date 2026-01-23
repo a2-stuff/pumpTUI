@@ -1,33 +1,32 @@
-FROM python:3.12-alpine
+FROM python:3.12-slim
 
-# Install build dependencies for Python packages with C extensions
-RUN apk add --no-cache \
-    gcc \
-    musl-dev \
+# Install runtime and build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     libffi-dev \
-    openssl-dev \
-    cargo \
-    git
+    libssl-dev \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
 
-# Copy requirements or install dependencies directly
 # Install Python dependencies
+# Using --no-cache-dir to keep image slim
 RUN pip install --no-cache-dir \
-    textual \
+    textual>=0.86.0 \
+    rich>=13.7.0 \
     motor \
     pymongo \
     websockets \
     httpx \
     psutil \
-    rich \
     cryptography \
     python-dotenv \
-    Pillow
-
-# Remove build dependencies to reduce image size (keep runtime deps)
-RUN apk del gcc musl-dev cargo
+    Pillow \
+    solana \
+    solders
 
 # Copy application code
 COPY . /app
@@ -35,9 +34,7 @@ COPY . /app
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
-
-# Expose any necessary ports (if needed for future features)
-# EXPOSE 8000
+ENV COLORTERM=truecolor
 
 # Set the entrypoint
 ENTRYPOINT ["python3", "-m", "pump_tui.main"]

@@ -12,6 +12,7 @@ import re
 import time
 from datetime import datetime
 from ..config import config
+from ..trading import TradingClient
 from .image_utils import fetch_token_metadata
 try:
     from .image_renderer import render_image_to_ansi
@@ -1183,18 +1184,34 @@ class TradeInput(Input):
     """Input that triggers trade execution on 'e' key."""
     
     def _on_key(self, event) -> None:
-        if event.key == "e":
+        if event.key in ["e", "b", "s"]:
             # Find parent panel and execute (dynamic lookup to avoid scope issues)
             # Traverse up to find the container with the action
             node = self.parent
             while node:
-                if node.id == "trade_panel_container" or isinstance(node, Container):
-                    # Check if this node has the action we need (It's likely the TradePanel wrapper or the Panel itself)
-                    # TradePanel is the widget class, but we can check via class name string or method existence
-                    if hasattr(node, "action_execute_trade"):
+                if node.id in ["trade_panel_container", "trade_dialog"] or isinstance(node, Container):
+                    if event.key == "e" and hasattr(node, "action_execute_trade"):
                         node.action_execute_trade()
-                        event.stop() # Prevent 'e' from being typed
+                        event.stop() 
                         return
+                    elif event.key == "b":
+                        if hasattr(node, "action_toggle_buy"):
+                            node.action_toggle_buy()
+                            event.stop()
+                            return
+                        elif hasattr(node, "set_mode"):
+                            node.set_mode("buy")
+                            event.stop()
+                            return
+                    elif event.key == "s":
+                        if hasattr(node, "action_toggle_sell"):
+                            node.action_toggle_sell()
+                            event.stop()
+                            return
+                        elif hasattr(node, "set_mode"):
+                            node.set_mode("sell")
+                            event.stop()
+                            return
                 node = node.parent
         super()._on_key(event)
 
@@ -1231,9 +1248,8 @@ class TradePanel(Container):
             self.query_one("#buy_button").remove_class("-active")
             self.query_one("#denom_label").update("(%)")
             
-            # Switch to Sell: Append %
-            curr_val = inp.value.replace("%", "").strip()
-            inp.value = (curr_val if curr_val else "100") + "%"
+            # Switch to Sell: Default to 100%
+            inp.value = "100%"
             # Allow numbers and %
             inp.restrict = r"^[0-9.%]*$"
             
@@ -1298,8 +1314,9 @@ class TradePanel(Container):
 
             # Contract, Description, & Socials Box
             with Container(classes="stats-grid"):
-                # Contract with Blue Label
-                yield Label("[#89b4fa]Contract:[/]", id="ca_label", classes="panel-info")
+                # Name and Contract with Blue Label
+                yield Label("[b][#89b4fa]Token Name:[/][/] -", id="name_label", classes="panel-info")
+                yield Label("[b][#89b4fa]Contract:[/][/] -", id="ca_label", classes="panel-info")
                 
                 yield Label("Description:", classes="info-box-header")
                 yield Label("-", id="desc_label", classes="info-box-text")
@@ -1318,7 +1335,7 @@ class TradePanel(Container):
             with Container(id="amount_stats_box", classes="stats-grid"):
                 with Vertical():
                     with Horizontal(classes="input-row-inner"):
-                        yield Label("Amount:", classes="input_label")
+                        yield Label("[b][#89b4fa]Amount:[/][/]", classes="input_label")
                         yield TradeInput(value="1.0", id="amount_input", classes="input_field", restrict=r"^[0-9.%]*$")
                         yield Label("(SOL)", id="denom_label", classes="mini-label")
                     yield Label("", id="estimated_amount")
@@ -1540,8 +1557,10 @@ class TradePanel(Container):
             # If we don't have it, just show 0.0 or -.
             self.query_one("#initial_label", Label).update(f"Int. Buy: {init_buy:.2f}")
 
-            # Display full CA
-            self.query_one("#ca_label", Label).update(Text.from_markup(f"[#89b4fa]Contract:[/] {mint}"))
+            # Display Name and full CA
+            name = self.token_data.get("name", "Unknown")
+            self.query_one("#name_label", Label).update(Text.from_markup(f"[b][#89b4fa]Token Name:[/] {name}"))
+            self.query_one("#ca_label", Label).update(Text.from_markup(f"[b][#89b4fa]Contract:[/] {mint}"))
             
             tx = self.token_data.get("tx_count", 0)
             tx_thresh = config.thresholds["tx"]
@@ -1599,17 +1618,17 @@ class TradePanel(Container):
                     sol_in = float(amount_str)
                     if price_sol > 0:
                         tokens_out = sol_in / price_sol
-                        label.update(f"Estimated ~ {tokens_out:,.0f} Tokens")
+                        label.update(Text.from_markup(f"[b][#89b4fa]Est:[/][/] {tokens_out:,.0f} Tokens"))
                     else:
-                        label.update("Price Error")
+                        label.update(Text.from_markup(f"[b][#89b4fa]Est:[/][/] Price Error"))
                 except ValueError:
-                     label.update("Invalid Amount")
+                     label.update(Text.from_markup(f"[b][#89b4fa]Est:[/][/] Invalid Amount"))
             else:
                 # Sell Mode
                 clean_val = amount_str.replace("%", "").strip()
                 try:
                     percent = float(clean_val)
-                    label.update(f"Selling ~ {percent}%")
+                    label.update(Text.from_markup(f"[b][#89b4fa]Est:[/][/] Selling {percent}%"))
                 except ValueError:
                     label.update("")
         except Exception:
@@ -1704,7 +1723,6 @@ class TradePanel(Container):
 
     async def _execute_trade_async(self, mint, action, amount, denominated_in_sol, slippage, priority_fee):
         try:
-            from ..trading import TradingClient
             priv_key = self.active_wallet.get("privateKey")
             client = TradingClient(
                 rpc_url=config.rpc_url,
@@ -1738,8 +1756,9 @@ class TradePanel(Container):
                  f.write(f"Panel Trade Error: {e}\n")
         finally:
             self.is_processing = False
-            self.query_one("#execute_button", Button).disabled = False
-            self.query_one("#execute_button", Button).label = "Execute (e)"
+            btn = self.query_one("#execute_button", Button)
+            btn.disabled = False
+            btn.label = "Execute (e)"
 
     async def _fetch_creator_counts(self, creator_pubkey: str):
         """Fetch and update creator launched/migrated counts from DB."""

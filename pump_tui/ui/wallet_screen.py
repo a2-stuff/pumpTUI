@@ -4,7 +4,7 @@ from textual.widgets import Static, Button, Input, Label, DataTable
 from textual.widget import Widget
 from textual.screen import Screen, ModalScreen
 from textual.binding import Binding
-from ..helpers import save_env_var, get_env_var, set_active_wallet # Keep active wallet helper for status updates if needed, but we'll reimplement
+from ..helpers import save_env_var, get_env_var 
 from ..api import PumpPortalClient
 from ..database import db # Import DB
 import asyncio

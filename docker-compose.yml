@@ -4,6 +4,8 @@ services:
   mongodb:
     image: mongo:latest
     container_name: pumptui-mongo
+    ports:
+      - "27018:27017"
     volumes:
       - pumptui-mongodb:/data/db
     networks:
@@ -36,6 +38,8 @@ services:
     environment:
       - MONGO_URI=mongodb://mongodb:27017
       - PYTHONUNBUFFERED=1
+      - TERM=xterm-256color
+      - COLORTERM=truecolor
 
 volumes:
   pumptui-mongodb:

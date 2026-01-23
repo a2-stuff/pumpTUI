@@ -11,7 +11,6 @@ from textual.widgets import Header, Footer, TabbedContent, TabPane, Placeholder,
 # Define custom themes for Textual Palette (Ctrl+P)
 MODERN_DOLPHINE = Theme(
     name="dolphine",
-    dark=True,
     primary="#89b4fa",
     secondary="#cba6f7",
     accent="#f5c2e7",
@@ -23,10 +22,11 @@ MODERN_DOLPHINE = Theme(
     error="#f38ba8",
     warning="#fab387",
 )
+MODERN_DOLPHINE.text = "#cdd6f4"
+MODERN_DOLPHINE.boost = "#1e1e2e"
 
 MATRIX_CYBER = Theme(
     name="cyber",
-    dark=True,
     primary="#00ff41",
     secondary="#008f11",
     accent="#00ff41",
@@ -38,19 +38,21 @@ MATRIX_CYBER = Theme(
     error="#ff003c",
     warning="#f2ff00",
 )
+MATRIX_CYBER.text = "#00ff41"
+MATRIX_CYBER.boost = "#0d0d0d"
 
-class SystemHeader(Container):
 from textual.containers import Container
 from textual.binding import Binding
 from textual.reactive import reactive
 from ..api import PumpPortalClient
-from ..helpers import get_env_var
+from ..helpers import get_env_var, get_http_client
 from .widgets import TokenTable, TokenDetail, VolumeTable, RunnersTable, TradePanel
 from .screens import SettingsView, InfoView, WalletTrackerView, QuitScreen, StartupScreen, ShutdownScreen, TradeModal
 from .wallet_screen import WalletView
 from ..dex_api import DexScreenerClient
 from ..database import db
 from ..config import config
+from ..trading import TradingClient
 from rich.text import Text
 
 class SystemHeader(Container):
@@ -135,7 +137,7 @@ class SystemHeader(Container):
             bal_str = getattr(self.app, "wallet_balance_str", " -- SOL")
             active_pub = getattr(self.app, "active_wallet_pub", "")
             if active_pub:
-                 bal_display = f" [bold white]Bal:[/] [#a6e3a1]{bal_str}[/] "
+                 bal_display = f" [bold white]Bal:[/] [green]{bal_str}[/] "
             else:
                  bal_display = " [dim]No Wallet[/] "
 
@@ -156,12 +158,12 @@ class SystemHeader(Container):
 class PumpApp(App):
     """A Textual app to view Pump.fun tokens."""
 
-    TITLE = "pumpTUI v1.1.8"
-    CSS_PATH = "themes/base.tcss"
+    TITLE = "pumpTUI v1.1.9"
+    CSS_PATH = "styles.tcss"
     
     BINDINGS = [
         Binding("q", "quit", "Quit", show=False),
-        Binding("ctrl+p", "command_palette", "Palette", show=True),
+        Binding("ctrl+l", "command_palette", "Palette", show=False),
         Binding("n", "switch_to_new", "New Tokens", show=False),
         Binding("t", "switch_to_tracker", "Tracker", show=False),
         Binding("w", "switch_to_wallets", "Wallets", show=False),
@@ -185,6 +187,20 @@ class PumpApp(App):
             except Exception:
                 pass
         self.call_after_refresh(_focus)
+
+    def watch_theme(self, theme: str) -> None:
+        """Watch for theme changes to persist them."""
+        # Log for debugging Docker issues
+        with open("error.log", "a") as f:
+            f.write(f"[{datetime.now().isoformat()}] Theme changed to: {theme}\n")
+            
+        # Map internal names back to config names
+        reverse_map = {"dolphine": "Dolphine", "cyber": "Cyber"}
+        config_name = reverse_map.get(theme)
+        if config_name and config.current_theme != config_name:
+            config.current_theme = config_name
+            asyncio.create_task(config.save_to_db())
+            self.notify(f"Theme saved: {config_name}")
 
     def __init__(self):
         super().__init__()
@@ -295,14 +311,13 @@ class PumpApp(App):
     async def update_rpc_latency(self) -> None:
         """Measure RPC Latency via getHealth call."""
         import time
-        import httpx
         from ..config import config
         
         start = time.perf_counter()
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                payload = {"jsonrpc": "2.0", "id": 1, "method": "getHealth"}
-                await client.post(config.rpc_url, json=payload)
+            client = get_http_client()
+            payload = {"jsonrpc": "2.0", "id": 1, "method": "getHealth"}
+            await client.post(config.rpc_url, json=payload)
             self.rpc_latency = int((time.perf_counter() - start) * 1000)
         except:
             self.rpc_latency = -1 # Error state
@@ -340,10 +355,17 @@ class PumpApp(App):
                 if wallet:
                      self.active_wallet = wallet
                      self.active_wallet_pub = wallet.get("walletPublicKey")
-                     self.notify(f"Loaded Wallet: {self.active_wallet_pub[:6]}..") # Debug notify
+                     # self.notify(f"Loaded Wallet: {self.active_wallet_pub[:6]}..") # Debug notify
                 else:
                     self.active_wallet = None
                     self.active_wallet_pub = ""
+            
+            if self.active_wallet:
+                pub = self.active_wallet.get("walletPublicKey")
+                display = f"{pub[:6]}...{pub[-6:]}"
+                self.query_one("#active_wallet_info", Label).update(f"Active: [yellow]{display}[/]")
+            else:
+                self.query_one("#active_wallet_info", Label).update("Active: [red]None[/]")
             
             await self.update_global_balance()
                          
@@ -358,18 +380,17 @@ class PumpApp(App):
                 return
             
             pub_key = self.active_wallet.get("walletPublicKey")
-            import httpx
             from ..config import config
             
             payload = {"jsonrpc": "2.0", "id": 1, "method": "getBalance", "params": [pub_key]}
-            async with httpx.AsyncClient(timeout=2.0) as http_client:
-                response = await http_client.post(config.rpc_url, json=payload)
-                if response.status_code == 200:
-                    data = response.json()
-                    val = data.get("result", {}).get("value")
-                    if val is not None:
-                         bal_sol = val / 1_000_000_000
-                         self.wallet_balance_str = f"{bal_sol:.4f} SOL"
+            client = get_http_client()
+            response = await client.post(config.rpc_url, json=payload)
+            if response.status_code == 200:
+                data = response.json()
+                val = data.get("result", {}).get("value")
+                if val is not None:
+                     bal_sol = val / 1_000_000_000
+                     self.wallet_balance_str = f"{bal_sol:.4f} SOL"
         except: pass
 
     async def update_market_prices(self) -> None:
@@ -458,35 +479,6 @@ class PumpApp(App):
                  await self.api_client.close()
         self.exit()
 
-    def save_token_to_csv(self, token_data: dict) -> None:
-        """Save token to daily CSV file."""
-        try:
-            date_str = datetime.now().strftime("%Y-%m-%d")
-            filename = f"tokensdb/tokens_{date_str}.csv"
-            file_exists = os.path.isfile(filename)
-            
-            # Ensure directory exists
-            os.makedirs("tokensdb", exist_ok=True)
-            
-            with open(filename, "a", newline="", encoding="utf-8") as f:
-                writer = csv.writer(f)
-                # Write header if new file
-                if not file_exists:
-                    writer.writerow(["timestamp", "mint", "name", "symbol", "dev_address", "bonding_curve"])
-                
-                # Extract fields safely
-                timestamp = datetime.now().isoformat()
-                mint = token_data.get("mint", "")
-                name = token_data.get("name", "")
-                symbol = token_data.get("symbol", "")
-                dev = token_data.get("traderPublicKey", "")
-                curve = token_data.get("bondingCurveKey", "")
-                
-                writer.writerow([timestamp, mint, name, symbol, dev, curve])
-        except Exception as e:
-            # Log error but don't crash app
-            with open("error.log", "a") as f:
-                f.write(f"CSV Error: {e}\n")
 
     async def action_switch_to_settings(self) -> None:
         """Switch to settings tab."""
@@ -663,9 +655,6 @@ class PumpApp(App):
          if "mint" in event and event.get("txType") in [None, "create"]:
              # Track for Velocity
              self.token_timestamps.append(datetime.now().timestamp())
-             
-             # Save to CSV
-             self.save_token_to_csv(event)
              
              mint = event.get("mint")
              if mint:

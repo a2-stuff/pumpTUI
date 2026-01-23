@@ -12,7 +12,8 @@ class TradingClient:
     """Client for PumpPortal trading API and transaction management."""
     
     PUMPPORTAL_API_URL = "https://pumpportal.fun/api/trade-local"
-    
+    from .helpers import get_http_client
+
     def __init__(self, rpc_url: str, wallet_private_key: str, api_key: Optional[str] = None):
         """
         Initialize trading client.
@@ -58,7 +59,7 @@ class TradingClient:
             "publicKey": str(self.keypair.pubkey()),
             "action": action,
             "mint": mint,
-            "denominatedInSol": "true" if denominated_in_sol else "false",
+            "denominatedInSol": bool(denominated_in_sol),
             "amount": amount,
             "slippage": float(slippage),
             "priorityFee": float(priority_fee)
@@ -72,27 +73,28 @@ class TradingClient:
             headers["api-key"] = self.api_key
         
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    self.PUMPPORTAL_API_URL,
-                    json=request_data,
-                    headers=headers
-                )
-                
-                if response.status_code == 200:
-                    return response.content
-                else:
-                    error_body = response.text
-                    # Log failure details for debugging
-                    with open("error.log", "a") as f:
-                        import json
-                        f.write(f"\n--- PumpPortal API Error {datetime.now()} ---\n")
-                        f.write(f"Status: {response.status_code}\n")
-                        f.write(f"URL: {self.PUMPPORTAL_API_URL}\n")
-                        f.write(f"Headers: {headers}\n")
-                        f.write(f"Payload: {json.dumps(request_data)}\n")
-                        f.write(f"Response Body: {error_body}\n")
-                    raise Exception(f"PumpPortal API error: {error_body}")
+            from .helpers import get_http_client
+            client = get_http_client()
+            response = await client.post(
+                self.PUMPPORTAL_API_URL,
+                json=request_data,
+                headers=headers
+            )
+            
+            if response.status_code == 200:
+                return response.content
+            else:
+                error_body = response.text
+                # Log failure details for debugging
+                with open("error.log", "a") as f:
+                    import json
+                    f.write(f"\n--- PumpPortal API Error {datetime.now()} ---\n")
+                    f.write(f"Status: {response.status_code}\n")
+                    f.write(f"URL: {self.PUMPPORTAL_API_URL}\n")
+                    f.write(f"Headers: {headers}\n")
+                    f.write(f"Payload: {json.dumps(request_data)}\n")
+                    f.write(f"Response Body: {error_body}\n")
+                raise Exception(f"PumpPortal API error: {error_body}")
                     
         except Exception as e:
             # Catch timeouts and other connection issues
@@ -120,31 +122,32 @@ class TradingClient:
             
             # Prepare RPC request
             commitment = CommitmentLevel.Confirmed
-            config = RpcSendTransactionConfig(preflight_commitment=commitment)
-            tx_payload = SendVersionedTransaction(signed_tx, config)
+            config_rpc = RpcSendTransactionConfig(preflight_commitment=commitment)
+            tx_payload = SendVersionedTransaction(signed_tx, config_rpc)
             
             # Send to RPC
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    self.rpc_url,
-                    headers={"Content-Type": "application/json"},
-                    content=tx_payload.to_json()
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    if "result" in data:
-                        return data["result"]
-                    elif "error" in data:
-                        err_data = data["error"]
-                        msg = err_data.get("message", "")
-                        if "AccountNotFound" in str(err_data) or "record of a prior credit" in msg:
-                            raise Exception("Insufficient SOL: Your wallet has no balance or hasn't been funded.")
-                        raise Exception(f"RPC error: {msg}")
-                    else:
-                        raise Exception(f"Unexpected response: {data}")
+            from .helpers import get_http_client
+            client = get_http_client()
+            response = await client.post(
+                self.rpc_url,
+                headers={"Content-Type": "application/json"},
+                content=tx_payload.to_json()
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if "result" in data:
+                    return data["result"]
+                elif "error" in data:
+                    err_data = data["error"]
+                    msg = err_data.get("message", "")
+                    if "AccountNotFound" in str(err_data) or "record of a prior credit" in msg:
+                        raise Exception("Insufficient SOL: Your wallet has no balance or hasn't been funded.")
+                    raise Exception(f"RPC error: {msg}")
                 else:
-                    raise Exception(f"RPC HTTP error: {response.status_code}")
+                    raise Exception(f"Unexpected response: {data}")
+            else:
+                raise Exception(f"RPC HTTP error: {response.status_code}")
         except Exception as e:
             raise Exception(f"Failed to send transaction: {e}")
     
@@ -213,19 +216,20 @@ class TradingClient:
         }
         
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(self.rpc_url, json=payload)
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    if "result" in data and "value" in data["result"]:
-                        accounts = data["result"]["value"]
-                        if accounts:
-                            # Get the first token account's balance
-                            token_amount = accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]
-                            return float(token_amount["amount"])
-                    return 0.0
-                else:
-                    return 0.0
+            from .helpers import get_http_client
+            client = get_http_client()
+            response = await client.post(self.rpc_url, json=payload)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if "result" in data and "value" in data["result"]:
+                    accounts = data["result"]["value"]
+                    if accounts:
+                        # Get the first token account's balance
+                        token_amount = accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]
+                        return float(token_amount["amount"])
+                return 0.0
+            else:
+                return 0.0
         except Exception:
             return 0.0
