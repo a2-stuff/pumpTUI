@@ -216,8 +216,9 @@ class TokenTable(Widget):
              self._pending_updates = True
              return
 
-        # Pause on Scroll: If user is browsing history (cursor > 1), don't shift the table
-        if self.table.cursor_row > 1:
+        # Pause on full re-render if user is browsing history (cursor > 5)
+        # But atomic updates in add_new_token will still occur.
+        if self.table.cursor_row > 5:
             self._pending_updates = True
             return
 
@@ -495,30 +496,27 @@ class TokenTable(Widget):
                 except: pass
 
             if should_render:
-                # Flag for update instead of manual row manipulation
-                # This ensures consistent ordering via render_page
-                self._pending_updates = True
-                
-                # Maintain cursor? render_page handles state restoration if we pass logic?
-                # Actually _request_render stores state.
-                pass
-
-
-                
-                # Maintain page size limit
-                if self.table.row_count > self.page_size:
-                    # Remove the last row to stay within page boundary
-                    # We need the key of the last row
-                    last_idx = self.table.row_count - 1
-                    try:
-                        # row_at returns the row object/data? No, table.rows is a dict?
-                        # Coordinate to row key
-                        last_row_key = self.table.coordinate_to_cell_key((last_idx, 0)).row_key
-                        self.table.remove_row(last_row_key)
-                    except: pass
-                
-                # Update labels without full re-render
-                self.query_one("#page_label", Label).update(f"Page {self.current_page} (Total: {len(self.filtered_history)})")
+                # OPTIMIZATION: Atomic addition to keep cursor stable and fast
+                # This prevents the "jumping" caused by full clear/re-render
+                row_data = self._format_row_data(item)
+                try:
+                    self.table.add_row(*row_data, key=mint, before=0)
+                    
+                    # Maintain page size limit (important for vertical stability)
+                    if self.table.row_count > self.page_size:
+                        try:
+                            # Use coordinate_to_cell_key to find the last row's key
+                            last_row_idx = self.table.row_count - 1
+                            last_row_key = self.table.coordinate_to_cell_key((last_row_idx, 0)).row_key
+                            self.table.remove_row(last_row_key)
+                        except:
+                            pass
+                    
+                    # Update label
+                    self.query_one("#page_label", Label).update(f"Page {self.current_page} (Total: {len(self.filtered_history)})")
+                except:
+                    # Fallback to full render if atomic update fails
+                    self._pending_updates = True
             else:
                 self._pending_updates = True
 
@@ -538,7 +536,7 @@ class TokenTable(Widget):
         if not hasattr(self, "_last_binding_refresh"):
             self._last_binding_refresh = 0
             
-        if now - self._last_binding_refresh > 0.1:
+        if now - self._last_binding_refresh > 0.2:
             self._last_binding_refresh = now
             try:
                 self.app.refresh_bindings()
@@ -1261,6 +1259,7 @@ class TradePanel(Container):
         self.token_data = {}
         self.trade_mode = "buy"
         self.active_wallet = None
+        self.trading_client = None
         self.is_processing = False
         self.data_provider = None # Will assign later or passed via update
         self.last_chart_mc = 0.0
@@ -1405,6 +1404,18 @@ class TradePanel(Container):
             # We keep these queries safe in case they are restored or used elsewhere.
             if self.active_wallet:
                 pub = self.active_wallet.get("walletPublicKey")
+                
+                # Pre-initialize/Worm-up the trading client for faster execution
+                if not self.trading_client or getattr(self.trading_client, "_pub_key", "") != pub:
+                    try:
+                        self.trading_client = TradingClient(
+                            rpc_url=config.rpc_url,
+                            wallet_private_key=self.active_wallet.get("privateKey"),
+                            api_key=getattr(config, "api_key", None) if hasattr(config, "api_key") else ""
+                        )
+                        self.trading_client._pub_key = pub
+                    except: pass
+
                 display = f"{pub[:6]}...{pub[-6:]}"
                 try: self.query_one("#active_wallet_info", Label).update(Text.from_markup(f"Active: [#f9e2af]{display}[/]"))
                 except: pass
@@ -1757,7 +1768,6 @@ class TradePanel(Container):
             self.query_one("#execute_button", Button).disabled = True
             self.query_one("#execute_button", Button).label = "Processing..."
             
-            import asyncio
             asyncio.create_task(self._execute_trade_async(
                 mint=self.token_data.get("mint"),
                 action=self.trade_mode,
@@ -1772,14 +1782,17 @@ class TradePanel(Container):
 
     async def _execute_trade_async(self, mint, action, amount, denominated_in_sol, slippage, priority_fee):
         try:
-            priv_key = self.active_wallet.get("privateKey")
-            client = TradingClient(
-                rpc_url=config.rpc_url,
-                wallet_private_key=priv_key,
-                api_key=getattr(config, "api_key", None) if hasattr(config, "api_key") else "" 
-            )
+            # Use pre-loaded client for maximum speed
+            if not self.trading_client:
+                 # Last second fallback
+                 priv_key = self.active_wallet.get("privateKey")
+                 self.trading_client = TradingClient(
+                    rpc_url=config.rpc_url,
+                    wallet_private_key=priv_key,
+                    api_key=getattr(config, "api_key", None) if hasattr(config, "api_key") else "" 
+                 )
             
-            signature = await client.execute_trade(
+            signature = await self.trading_client.execute_trade(
                 mint=mint,
                 action=action,
                 amount=amount,

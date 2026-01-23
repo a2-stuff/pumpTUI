@@ -180,6 +180,7 @@ class PumpApp(App):
         Binding("o", "open_in_browser", "Open (o)"),
         Binding("c", "copy_ca", "Copy CA (c)"),
         Binding("l", "focus_trade_table", "Trade Table (l)"),
+        Binding("a", "sort_new_age", "Sort Age (a)"),
         Binding("enter", "select_token_action", "Select", show=True),
     ]
     
@@ -472,6 +473,7 @@ class PumpApp(App):
                 # Sorting bindings
                 self.bind("m", "sort_new_mc", description="Sort MC", show=True)
                 self.bind("v", "sort_new_vol", description="Sort Vol", show=True)
+                self.bind("a", "sort_new_age", description="Sort Age", show=True)
                 self.bind("l", "sort_new_live", description="Live (Reset)", show=True)
 
             # Clean up Runners bindings if not in trending
@@ -479,6 +481,7 @@ class PumpApp(App):
                 if active_tab != "new":
                      if "m" in self._bindings._map: self._bindings._map.pop("m")
                      if "v" in self._bindings._map: self._bindings._map.pop("v")
+                     if "a" in self._bindings._map: self._bindings._map.pop("a")
                      if "l" in self._bindings._map: self._bindings._map.pop("l")
                      
                 # Handle Trading Bindings (Always show if in New Tokens tab)
@@ -562,8 +565,8 @@ class PumpApp(App):
              panel.query_one("#amount_input").focus()
         except: pass
 
-    async def action_trade_execute(self) -> None:
-        """Trigger trade execution in the persistent Trade Panel."""
+    def action_trade_execute(self) -> None:
+        """Trigger trade execution in the persistent Trade Panel. Synchronous for speed."""
         try:
              panel = self.query_one("#trade_panel_view", TradePanel)
              panel.action_execute_trade()
@@ -865,6 +868,12 @@ class PumpApp(App):
         except: pass
 
     async def action_sort_new_live(self):
+        try:
+             self.query_one("#table_new", TokenTable).reset_sort_live()
+        except: pass
+
+    async def action_sort_new_age(self):
+        """Sort New Tokens table by Age (Newest first)."""
         try:
              self.query_one("#table_new", TokenTable).reset_sort_live()
         except: pass
