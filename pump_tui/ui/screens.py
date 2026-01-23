@@ -1,4 +1,4 @@
-from textual.widgets import Label, Input, Button, Markdown, Static
+from textual.widgets import Label, Input, Button, Markdown, Static, Select
 from textual.containers import Vertical, Container, Horizontal, Grid
 from textual.screen import ModalScreen, Screen
 from textual.app import ComposeResult
@@ -56,6 +56,12 @@ class SettingsView(Container):
         yield Button("Save Coloring Layout", variant="success", id="save_colors")
         yield Static("Above 'Yellow <' value will be Green.", classes="info-text")
         
+        # Theme Section
+        yield Label("Application Theme", classes="setting-title")
+        theme_options = [(name, name) for name in config.THEMES.keys()]
+        yield Select(options=theme_options, value=config.current_theme, id="theme_select")
+        yield Button("Save Theme", variant="primary", id="save_theme")
+
         # RPC Configuration Section
         yield Label("RPC Configuration", classes="setting-title")
         yield Vertical(
@@ -113,6 +119,13 @@ class SettingsView(Container):
             else:
                 self.app.notify("Error: RPC URL cannot be empty.", variant="error")
         
+        elif event.button.id == "save_theme":
+            theme = self.query_one("#theme_select", Select).value
+            if theme:
+                config.current_theme = theme
+                asyncio.create_task(config.save_to_db())
+                self.app.notify(f"Theme set to {theme}. Restart required to apply.", severity="warning")
+
         elif event.button.id == "save_trading_defaults":
             try:
                 slippage = float(self.query_one("#default_slippage", Input).value)

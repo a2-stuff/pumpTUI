@@ -1436,8 +1436,13 @@ class TradePanel(Container):
             
             # Description
             desc = meta.get("description", "-")
-            if len(desc) > 80:
-                desc = desc[:77] + "..."
+            if desc and desc != "-":
+                lines = desc.splitlines()
+                if len(lines) > 3:
+                    desc = "\n".join(lines[:3]).strip() + "..."
+                elif len(desc) > 150: # Safeguard for very long single-line descriptions
+                    desc = desc[:147] + "..."
+            
             self.query_one("#desc_label", Label).update(escape(desc) if desc else "-")
             
             # Social Links

@@ -13,6 +13,11 @@ class Config:
         "holders": {"red": 20.0, "yellow": 50.0},
         "vol": {"red": 5000.0, "yellow": 15000.0}
     }
+    
+    THEMES = {
+        "Dolphine": "themes/dolphine.tcss",
+        "Cyber": "themes/cyber.tcss"
+    }
 
     def __init__(self):
         self.thresholds = self.DEFAULT_THRESHOLDS.copy()
@@ -21,6 +26,7 @@ class Config:
         self.mongo_uri = get_env_var("MONGO_URI") or "mongodb://localhost:27017"
         self.default_slippage = float(get_env_var("DEFAULT_SLIPPAGE") or "10")
         self.default_priority_fee = float(get_env_var("DEFAULT_PRIORITY_FEE") or "0.005")
+        self.current_theme = "Dolphine"
 
     async def load_from_db(self):
         """Load configuration from MongoDB."""
@@ -45,6 +51,11 @@ class Config:
             
             fee = await db.get_setting("default_priority_fee")
             if fee: self.default_priority_fee = float(fee)
+
+            # Load Theme
+            theme = await db.get_setting("current_theme")
+            if theme in self.THEMES:
+                self.current_theme = theme
             
         except Exception:
             pass 
@@ -58,6 +69,7 @@ class Config:
         await db.save_setting("rpc_url", self.rpc_url)
         await db.save_setting("default_slippage", self.default_slippage)
         await db.save_setting("default_priority_fee", self.default_priority_fee)
+        await db.save_setting("current_theme", self.current_theme)
 
     def update_thresholds(self, category: str, red: float, yellow: float):
         if category in self.thresholds:

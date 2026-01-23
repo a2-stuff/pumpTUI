@@ -16,6 +16,7 @@ from .screens import SettingsView, InfoView, WalletTrackerView, QuitScreen, Star
 from .wallet_screen import WalletView
 from ..dex_api import DexScreenerClient
 from ..database import db
+from ..config import config
 from rich.text import Text
 
 class SystemHeader(Container):
@@ -122,7 +123,7 @@ class PumpApp(App):
     """A Textual app to view Pump.fun tokens."""
 
     TITLE = "pumpTUI v1.1.7"
-    CSS_PATH = "styles.tcss"
+    CSS_PATH = config.THEMES.get(config.current_theme, "styles.tcss")
     BINDINGS = [
         Binding("q", "quit", "Quit", show=False),
         Binding("n", "switch_to_new", "New Tokens", show=False),
