@@ -111,56 +111,30 @@ def start_docker():
             print("❌ Error: Neither .env nor .env.example found.")
             sys.exit(1)
     
-    # Check if container already exists
-    result = subprocess.run(
-        docker_prefix + ["docker", "ps", "-a", "--filter", "name=pumptui-app", "--format", "{{.Names}}"],
-        capture_output=True,
-        text=True
-    )
+    print("🔄 Syncing code and starting containers...")
     
-    container_exists = "pumptui-app" in result.stdout
+    # Always build and up to ensure latest code is running
+    # Data is safe in volumes. Docker caching makes this fast.
+    result = subprocess.run(docker_prefix + ["docker-compose", "up", "-d", "--build"])
     
-    if container_exists:
-        # Check if it's running
-        result = subprocess.run(
-            docker_prefix + ["docker", "ps", "--filter", "name=pumptui-app", "--format", "{{.Names}}"],
-            capture_output=True,
-            text=True
-        )
-        is_running = "pumptui-app" in result.stdout
+    if result.returncode == 0:
+        print("✅ PumpTUI is running!")
+        print("🔗 Attaching to session...")
+        print("💡 Tip: Press Ctrl+P then Ctrl+Q to detach without stopping.")
         
-        if is_running:
-            print("✅ Container is already running. Attaching...")
-            print("💡 Tip: Press Ctrl+P then Ctrl+Q to detach without stopping.")
+        # Wait a moment for startup
+        import time
+        time.sleep(2)
+        
+        try:
             subprocess.run(docker_prefix + ["docker", "attach", "pumptui-app"])
-        else:
-            print("🔄 Starting existing container...")
-            subprocess.run(docker_prefix + ["docker-compose", "start", "app"])
-            print("✅ Container started. Attaching...")
-            print("💡 Tip: Press Ctrl+P then Ctrl+Q to detach without stopping.")
-            subprocess.run(docker_prefix + ["docker", "attach", "pumptui-app"])
+        except KeyboardInterrupt:
+            print("\nDetached from session. App is still running.")
     else:
-        print("🔨 Building and creating containers for the first time...")
-        print("   This may take a few minutes...")
-        
-        # Build and start with compose
-        result = subprocess.run(docker_prefix + ["docker-compose", "up", "-d", "--build"])
-        
-        if result.returncode == 0:
-            print("✅ Containers created and started successfully!")
-            print("🔗 Attaching to pumpTUI app...")
-            print("💡 Tip: Press Ctrl+P then Ctrl+Q to detach without stopping.")
-            
-            # Wait a moment for the container to fully start
-            import time
-            time.sleep(2)
-            
-            subprocess.run(docker_prefix + ["docker", "attach", "pumptui-app"])
-        else:
-            print("❌ Failed to start containers.")
-            cmd_prefix = "sudo " if docker_prefix else ""
-            print(f"Check logs with: {cmd_prefix}docker-compose logs")
-            sys.exit(1)
+        print("❌ Failed to start containers.")
+        cmd_prefix = "sudo " if docker_prefix else ""
+        print(f"Check logs with: {cmd_prefix}docker-compose logs")
+        sys.exit(1)
 
 def stop(use_docker=False):
     """Stop any running pumpTUI processes."""
