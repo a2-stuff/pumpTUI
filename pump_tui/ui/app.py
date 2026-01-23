@@ -161,6 +161,7 @@ class PumpApp(App):
     
     BINDINGS = [
         Binding("q", "quit", "Quit", show=False),
+        Binding("ctrl+shift+p", "command_palette", "Palette", show=True),
         Binding("n", "switch_to_new", "New Tokens", show=False),
         Binding("t", "switch_to_tracker", "Tracker", show=False),
         Binding("w", "switch_to_wallets", "Wallets", show=False),
