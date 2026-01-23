@@ -3,6 +3,12 @@
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Version](https://img.shields.io/badge/version-1.1.9-orange.svg)
 ![Solana](https://img.shields.io/badge/Solana-Data%20Stream-black.svg?logo=solana)
+![Python](https://img.shields.io/badge/Python-3.10+-blue.svg?logo=python)
+![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)
+![Blockchain](https://img.shields.io/badge/Blockchain-Solana-black.svg)
+![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black)
+![Windows](https://img.shields.io/badge/Windows-0078D6?logo=windows&logoColor=white)
+![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white)
 
 pumpTUI is a Terminal User Interface (TUI) application for viewing and tracking tokens on Pump.fun directly from your terminal. It provides real-time updates, detailed token information, and wallet tracking capabilities.
 
