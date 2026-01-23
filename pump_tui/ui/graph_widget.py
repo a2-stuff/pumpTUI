@@ -11,6 +11,7 @@ class CandleChart(Widget):
         self.data = [] # List of (open, high, low, close)
         self.chart_height = 11
         self.current_price = 100.0
+        self.last_trend = None
 
     def initialize_chart(self, start_price: float, count: int = 40):
         """Initialize chart with flat data at start_price."""
@@ -21,6 +22,7 @@ class CandleChart(Widget):
 
     def add_candle(self, trend: str):
         """Add a new candle based on trend ('up' or 'down')."""
+        self.last_trend = trend
         prev_close = self.data[-1][3] if self.data else self.current_price
         
         # Volatility
@@ -129,8 +131,15 @@ class CandleChart(Widget):
         
         # Fill right empty space (25% gap)
         remaining = width - (start_col + visible_count)
-        for _ in range(remaining):
+        for i in range(remaining):
             for y in range(self.chart_height):
-                lines[y] += " "
+                char = " "
+                # Draw arrow in top right (y=1, 2nd column from right)
+                if self.last_trend and y == 1 and i == remaining - 2:
+                    if self.last_trend == "up":
+                        char = "[green]▲[/]"
+                    elif self.last_trend == "down":
+                        char = "[red]▼[/]"
+                lines[y] += char
 
         return Text.from_markup("\n".join(lines))
