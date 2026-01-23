@@ -78,8 +78,8 @@ class SettingsView(Container):
         # Trading Defaults Section
         yield Label("Trading Defaults", classes="setting-title")
         yield Horizontal(
-            Vertical(Label("Slippage %", classes="small-label"), Input(value=str(config.default_slippage), id="default_slippage"), classes="thresh-input"),
-            Vertical(Label("Priority Fee", classes="small-label"), Input(value=str(config.default_priority_fee), id="default_priority_fee"), classes="thresh-input"),
+            Vertical(Label("Slippage %", classes="small-label"), Input(value=str(config.default_slippage), id="default_slippage", restrict=r"^[0-9.]*$"), classes="thresh-input"),
+            Vertical(Label("Priority Fee (SOL)", classes="small-label"), Input(value=str(config.default_priority_fee), id="default_priority_fee", restrict=r"^[0-9.]*$"), classes="thresh-input"),
             classes="setting-row"
         )
         yield Button("Save Trading Defaults", variant="primary", id="save_trading_defaults")
