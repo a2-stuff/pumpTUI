@@ -12,6 +12,16 @@ class CandleChart(Widget):
         self.chart_height = 11
         self.current_price = 100.0
         self.last_trend = None
+        self.frame = 0
+
+    def on_mount(self):
+        """Start animation timer."""
+        self.set_interval(0.2, self.animate)
+
+    def animate(self):
+        """Advance animation frame."""
+        self.frame += 1
+        self.refresh()
 
     def initialize_chart(self, start_price: float, count: int = 40):
         """Initialize chart with flat data at start_price."""
@@ -134,20 +144,21 @@ class CandleChart(Widget):
         for i in range(remaining):
             for y in range(self.chart_height):
                 char = " "
-                # Draw arrows in top right (y=5 and y=6, last column)
+                # Draw arrows in top right (y=4, 5, 6, last column)
                 if self.last_trend and i == remaining - 1:
-                    if y == 5:
-                        arrow = "▲" if self.last_trend == "up" else "▼"
-                        color = "green" if self.last_trend == "up" else "red"
-                        # Blink top arrow on Buy
-                        style = "blink" if self.last_trend == "up" else ""
-                        char = f"[{color} {style}]{arrow}[/]"
-                    elif y == 6:
-                        arrow = "▲" if self.last_trend == "up" else "▼"
-                        color = "green" if self.last_trend == "up" else "red"
-                        # Blink bottom arrow on Sell
-                        style = "blink" if self.last_trend == "down" else ""
-                        char = f"[{color} {style}]{arrow}[/]"
+                    arrow = "▲" if self.last_trend == "up" else "▼"
+                    color = "green" if self.last_trend == "up" else "red"
+                    
+                    # Sequence: Bottom(6) -> Middle(5) -> Top(4)
+                    step = self.frame % 3
+                    
+                    is_visible = False
+                    if y == 6 and step == 0: is_visible = True
+                    elif y == 5 and step == 1: is_visible = True
+                    elif y == 4 and step == 2: is_visible = True
+                    
+                    if is_visible:
+                        char = f"[{color} bold]{arrow}[/]"
                 lines[y] += char
 
         return Text.from_markup("\n".join(lines))

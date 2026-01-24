@@ -8,10 +8,11 @@ class Config:
     CONFIG_FILE = "config.json"
     
     DEFAULT_THRESHOLDS = {
-        "mc": {"red": 30.0, "yellow": 40.0},
-        "tx": {"red": 15.0, "yellow": 50.0},
-        "holders": {"red": 20.0, "yellow": 50.0},
-        "vol": {"red": 5000.0, "yellow": 15000.0}
+        "mc": {"red": 80.0, "yellow": 160.0},
+        "tx": {"red": 50.0, "yellow": 110.0},
+        "holders": {"red": 50.0, "yellow": 120.0},
+        "vol": {"red": 30000.0, "yellow": 60000.0},
+        "initial_buy": {"red": 1.0, "yellow": 2.0}
     }
 
     def __init__(self):

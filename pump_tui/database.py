@@ -140,6 +140,7 @@ class Database:
             
             if event.get("txType") == "create":
                 set_ops["creator"] = event.get("traderPublicKey")
+                set_ops["initial_buy"] = float(event.get("solAmount") or 0)
 
             if "txType" in event:
                 if event["txType"] == "buy": inc_ops["buys_count"] = 1

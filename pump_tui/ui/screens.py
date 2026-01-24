@@ -11,6 +11,8 @@ import traceback
 import httpx
 import asyncio
 
+import textwrap
+
 from ..config import config
 from .widgets import TradeInput
 
@@ -165,7 +167,7 @@ class SettingsView(VerticalScroll):
             except ValueError:
                 self.app.notify("Error: Please enter valid numbers.", severity="error")
 
-class InfoView(Container):
+class InfoView(VerticalScroll):
     can_focus = True
     MD_CONTENT = """
 # PumpTUI
@@ -183,8 +185,49 @@ Created by: @not_jarod
 Built with [Textual](https://textual.textualize.io).
 Design inspired by [Dolphie](https://github.com/charles-001/dolphie).
     """
+    
     def compose(self) -> ComposeResult:
          yield Markdown(self.MD_CONTENT)
+         
+         mc = config.thresholds["mc"]
+         vol = config.thresholds["vol"]
+         tx = config.thresholds["tx"]
+         holders = config.thresholds["holders"]
+
+         legend_str = f"""
+    [b u]Legend & Color Guide[/]
+
+    [b]Market Cap (MC)[/]
+    [green]●[/] High (> {mc['yellow']} SOL)
+    [yellow]●[/] Moderate ({mc['red']} - {mc['yellow']} SOL)
+    [red]●[/] Low (< {mc['red']} SOL)
+
+    [b]Volume[/]
+    [green]●[/] High (> ${vol['yellow']:,.0f})
+    [yellow]●[/] Moderate (${vol['red']:,.0f} - ${vol['yellow']:,.0f})
+    [red]●[/] Low (< ${vol['red']:,.0f})
+
+    [b]Transaction Count (Tx)[/]
+    [green]●[/] High (> {tx['yellow']})
+    [yellow]●[/] Moderate ({tx['red']} - {tx['yellow']})
+    [red]●[/] Low (< {tx['red']})
+
+    [b]Holders[/]
+    [green]●[/] Many (> {holders['yellow']})
+    [yellow]●[/] Moderate ({holders['red']} - {holders['yellow']})
+    [red]●[/] Few (< {holders['red']})
+
+    [b]Transaction Types[/]
+    [green]●[/] Buys             [red]●[/] Sells
+
+    [b]Developer Status (Dev)[/]
+    [green]SOLD[/] (Dev sold - Dump risk reduced)
+    [red]HOLDING[/] (Dev holding - Dump risk active)
+    """
+         yield Container(
+             Static(Text.from_markup(textwrap.dedent(legend_str).strip()), classes="legend-text"),
+             classes="legend-container"
+         )
 
 class WalletTrackerView(Container):
     can_focus = True

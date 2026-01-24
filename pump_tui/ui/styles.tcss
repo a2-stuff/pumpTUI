@@ -172,9 +172,8 @@ DataTable > .datatable--header {
 }
 
 DataTable > .datatable--cursor {
-    background: $primary;
-    color: $surface;
-    text-style: bold;
+    background: $surface-lighten-1;
+    text-style: none;
 }
 
 #search_input {
@@ -526,4 +525,27 @@ WalletView, #wallet_view, #wallet_container {
     padding: 0 1;
     border: tall $primary;
     background: $panel;
+}
+
+/* Legend Styles */
+/* Legend Styles */
+.legend-container {
+    border: solid $primary;
+    background: $surface;
+    padding: 1 2;
+    margin: 1 0;
+    height: auto;
+    width: 100%;
+}
+
+.legend-text {
+    color: $foreground;
+}
+
+Markdown {
+    height: auto;
+    margin-bottom: 1;
+    background: $panel;
+    padding: 2;
+    color: $foreground;
 }

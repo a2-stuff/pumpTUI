@@ -820,23 +820,47 @@ class PumpApp(App):
         """Refresh the current view."""
         self.notify("Streaming is active. No manual refresh needed.")
 
+    async def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        """Handle tab changes to update hotkey visibility."""
+        self.refresh_bindings()
+        try:
+            # Use label if available, otherwise id
+            label = event.tab.label.plain if hasattr(event.tab.label, "plain") else event.tab.id
+            self.notify(f"Switched to {label}")
+        except: pass
+
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Handle token selection (Enter key or Click)."""
-        self._handle_selection(event)
+        self._handle_selection(event.row_key.value)
+
+    def on_data_table_cell_selected(self, event: DataTable.CellSelected) -> None:
+        """Handle cell selection (Enter key when cursor_type='cell')."""
+        try:
+             # Retrieve row key from coordinate
+             table = self.query_one("#table_new", TokenTable).table
+             row_key = table.coordinate_to_cell_key(event.coordinate).row_key.value
+             self._handle_selection(row_key)
+        except: pass
 
     async def action_select_token_action(self) -> None:
         """No-op action to display 'Select' in footer. Selection is handled by DataTable event."""
+        # Force selection for current cursor if Enter pressed manually bound
+        try:
+             table = self.query_one("#table_new", TokenTable).table
+             if table.cursor_row is not None:
+                 # manual trigger
+                 # We can just get the key at cursor
+                 # But usually event fires.
+                 pass
+        except: pass
         pass
 
-    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        # Just update bindings or context, but DO NOT change Trade Panel data
-        self.refresh_bindings()
 
-    def _handle_selection(self, event: DataTable.RowSelected) -> None:
+
+    def _handle_selection(self, row_key: str) -> None:
         """Handle explicit token selection."""
         self.refresh_bindings()
         try:
-            row_key = event.row_key.value
             table_widget = self.query_one("#table_new", TokenTable)
             
             # 1. Update Checkbox State
@@ -848,6 +872,7 @@ class PumpApp(App):
             # 3. Update persistent Trade Panel
             if token_data:
                 self.query_one("#trade_panel_view", TradePanel).update_token(token_data)
+                self.notify(f"Selected: {token_data.get('name', 'Token')}")
                 
         except Exception as e:
             with open("debug_stream.log", "a") as f:
@@ -858,6 +883,7 @@ class PumpApp(App):
         try:
              # Sort by marketCapSol
              self.query_one("#table_new", TokenTable).sort_data("marketCapSol", reverse=True)
+             self.notify("Sorting by Market Cap...")
         except: pass
 
     async def action_sort_new_vol(self):
@@ -865,17 +891,20 @@ class PumpApp(App):
              # Sort by volume_sol (implied need to track volume)
              # Note: volume_sol might be 0 for new tokens.
              self.query_one("#table_new", TokenTable).sort_data("volume_sol", reverse=True)
+             self.notify("Sorting by Volume...")
         except: pass
 
     async def action_sort_new_live(self):
         try:
              self.query_one("#table_new", TokenTable).reset_sort_live()
+             self.notify("Sorting by Age (Live)...")
         except: pass
 
     async def action_sort_new_age(self):
         """Sort New Tokens table by Age (Newest first)."""
         try:
              self.query_one("#table_new", TokenTable).reset_sort_live()
+             self.notify("Sorting by Age (Live)...")
         except: pass
 
 

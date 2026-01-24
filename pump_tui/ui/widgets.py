@@ -37,6 +37,7 @@ class TokenTable(Widget):
         self._render_throttle = 0.5 # Minimum s between full renders
         self._last_full_render = 0.0
         self._tabbed_content = None # Cache for efficiency
+        self.visible_mints = set() # Performance: Track currently visible rows
         
         # Pagination & Search
         self.history: List[Dict[str, Any]] = []
@@ -62,10 +63,10 @@ class TokenTable(Widget):
             yield Button("Older >", id="btn_older")
 
     def on_mount(self) -> None:
-        self.table.cursor_type = "row"
+        self.table.cursor_type = "row" # Revert to row for full underline
         self.table_title = "New Tokens (Live)"
         self.table.border_title = self.table_title
-        cols = self.table.add_columns(" ", "Token CA", "Name", "Ticker", "MC ($)", "Tx", "Hold", "Buys", "Sells", "Vol ($)", "Dev", "Age")
+        cols = self.table.add_columns(" ", "Token CA", "Name", "Ticker", "MC ($)", "Tx", "Hold", "Buys", "Sells", "Vol ($)", "Dev", "Age", "Buy")
         # Store MC column key specifically
         if len(cols) >= 5:
             self.column_keys["MC ($)"] = cols[4]
@@ -83,9 +84,12 @@ class TokenTable(Widget):
             self.column_keys["Dev"] = cols[10]
         if len(cols) >= 12:
             self.column_keys["Age"] = cols[11]
+        if len(cols) >= 13:
+            self.column_keys["Init Buy"] = cols[12]
         
         # Timers
-        self.set_interval(1.0, self._update_ages)
+        # Replaced _update_ages with generic _update_visible_rows for efficiency
+        self.set_interval(0.5, self._update_visible_rows)
         self.set_interval(0.5, self.on_timer)
         
         # Initial Load
@@ -150,10 +154,6 @@ class TokenTable(Widget):
     def select_token(self, mint: str) -> bool:
         """Toggle selection of a token. Returns True if now selected."""
         if self.selected_mint == mint:
-             # Deselect? Or just keep selected? Let's keep selected as it's a radio behavior effectively for trading
-             # But user said "checkbox", usually implied multi-select or toggle.
-             # "selected token is what's going to be used". Singular.
-             # If same, maybe do nothing.
              return True
         
         self.selected_mint = mint
@@ -268,6 +268,29 @@ class TokenTable(Widget):
 
     def update_token_trade(self, trade: Dict[str, Any]) -> None:
         """Update existing token data from a trade event."""
+        # Note: Handled by previous optimization block logic which is mostly retained in full file
+        # We only need to replace on_data_table_row_highlighted logic usually in full view
+        # This wrapper is for the large replace block.
+        # Since I must replace a contiguous block, I will just paste the logic as I modified on_mount/etc.
+        pass
+
+    # ... (Reinserting update_token_trade Logic would be HUGE. Let's try to target smaller blocks)
+    # The user request affects on_mount, _format_row_data, and on_data_table_row_highlighted.
+    # These are spread out. I should use replacement chunks or multiple calls if possible.
+    # But widgets.py is huge. 
+    # Let me actually just do the _format_row_data replacement and on_mount replacement in one go? 
+    # No, on_mount is at top, format is at bottom.
+    # Let's do multiple replacements.
+
+    # FIRST: on_mount.
+    pass
+
+    # Wait, I am in the `ReplaceContent` of a Tool Use.
+    # I will cancel this generic block and do targeted replacements.
+    pass
+
+    def update_token_trade(self, trade: Dict[str, Any]) -> None:
+        """Update existing token data from a trade event (Data Only, No UI)."""
         mint = trade.get("mint")
         if not mint or mint not in self.data_store:
             return
@@ -280,57 +303,6 @@ class TokenTable(Widget):
             new_mc = trade["marketCapSol"]
             stored_item["marketCapSol"] = new_mc
             stored_item["market_cap"] = new_mc # Normalized
-            
-            # Coloring logic
-            mc_thresh = config.thresholds["mc"]
-            if new_mc > mc_thresh["yellow"]:
-                mc_style = "green"
-            elif new_mc >= mc_thresh["red"]:
-                mc_style = "yellow"
-            else:
-                mc_style = "red"
-            
-            # Update Table if visible (mint is the row key)
-            try:
-                col_key = self.column_keys.get("MC ($)")
-                if col_key:
-                    sol_price = getattr(self.app, "sol_price", 0.0)
-                    if sol_price > 0:
-                        mc_val_usd = new_mc * sol_price
-                        mc_str = f"[{mc_style}]${mc_val_usd:,.0f}[/]"
-                    else:
-                        mc_str = f"[{mc_style}]{new_mc:.2f} S[/]"
-                        
-                    self.table.update_cell(mint, col_key, Text.from_markup(mc_str))
-                
-                # Update Tx and Holders
-                tx_col = self.column_keys.get("Tx")
-                holders_col = self.column_keys.get("Hold")
-                
-                tx_count = stored_item.get("tx_count", 0)
-                tx_thresh = config.thresholds["tx"]
-                if tx_count > tx_thresh["yellow"]:
-                    tx_style = "green"
-                elif tx_count >= tx_thresh["red"]:
-                    tx_style = "yellow"
-                else:
-                    tx_style = "red"
-                
-                traders_count = len(stored_item.get("traders", set()))
-                h_thresh = config.thresholds["holders"]
-                if traders_count > h_thresh["yellow"]:
-                    h_style = "green"
-                elif traders_count >= h_thresh["red"]:
-                    h_style = "yellow"
-                else:
-                    h_style = "red"
-
-                if tx_col:
-                     self.table.update_cell(mint, tx_col, Text.from_markup(f"[{tx_style}]{tx_count}[/]"))
-                if holders_col:
-                     self.table.update_cell(mint, holders_col, Text.from_markup(f"[{h_style}]{traders_count}[/]"))
-            except Exception:
-                pass
         
         # Trigger re-sort if we are sorting and something changed
         if getattr(self, "limit_sorting", False):
@@ -338,10 +310,11 @@ class TokenTable(Widget):
 
         # --- Aggregation Logic ---
         # Track Traders
-        if "traderPublicKey" in trade:
+        key = trade.get("traderPublicKey") or trade.get("user") 
+        if key:
             if "traders" not in stored_item:
                  stored_item["traders"] = set()
-            stored_item["traders"].add(trade["traderPublicKey"])
+            stored_item["traders"].add(key)
 
         # Increment Tx Count
         stored_item["tx_count"] = stored_item.get("tx_count", 0) + 1
@@ -379,52 +352,12 @@ class TokenTable(Widget):
         new_vol = stored_item.get("volume_sol", 0.0) + sol_amt
         stored_item["volume_sol"] = new_vol
         
-        # Update Volume Cell
-        try:
-            vol_col = self.column_keys.get("Vol ($)")
-            if vol_col:
-                sol_price = getattr(self.app, "sol_price", 0.0)
-                if sol_price > 0:
-                     new_vol_usd = new_vol * sol_price
-                     v_thresh = config.thresholds["vol"]
-                     if new_vol_usd > v_thresh["yellow"]:
-                         v_style = "green"
-                     elif new_vol_usd >= v_thresh["red"]:
-                         v_style = "yellow"
-                     else:
-                         v_style = "red"
-                     self.table.update_cell(mint, vol_col, Text.from_markup(f"[{v_style}]${new_vol_usd:,.0f}[/]"))
-                else:
-                     self.table.update_cell(mint, vol_col, f"{new_vol:.2f} S")
-        except:
-            pass
-        
-        # Update Buys/Sells Cell (separate try/except for independence)
-        try:
-            buy_col = self.column_keys.get("Buys")
-            sell_col = self.column_keys.get("Sells")
-            if buy_col:
-                 self.table.update_cell(mint, buy_col, Text.from_markup(f"[green]{stored_item.get('buys_count', 0)}[/]"))
-            if sell_col:
-                 self.table.update_cell(mint, sell_col, Text.from_markup(f"[red]{stored_item.get('sells_count', 0)}[/]"))
-        except:
-            pass
-        
         # Check Dev Sold
         creator = stored_item.get("creator")
-        trader = trade.get("traderPublicKey")
-        tx_type = trade.get("txType")
+        trader = trade.get("traderPublicKey") or trade.get("user")
         
         if creator and trader and creator == trader and tx_type == "sell":
             stored_item["dev_sold"] = True
-            
-            # Update Table Cell for Dev Sold
-            dev_col = self.column_keys.get("Dev")
-            if dev_col:
-                try:
-                    self.table.update_cell(mint, dev_col, Text.from_markup("[green]SOLD[/]"))
-                except:
-                    pass
         # -------------------------
 
     def add_token(self, item: Dict[str, Any]) -> None:
@@ -459,7 +392,8 @@ class TokenTable(Widget):
         if item.get("txType") == "create":
              item["initial_buy"] = float(item.get("solAmount") or 0.0)
         else:
-             item["initial_buy"] = 0.0
+             # Use persisted value if available (handling DB reloads)
+             item["initial_buy"] = float(item.get("initial_buy", 0.0))
 
         self.data_store[mint] = item
 
@@ -472,6 +406,9 @@ class TokenTable(Widget):
             removed_mint = removed.get("mint")
             if removed_mint and removed_mint in self.data_store:
                 del self.data_store[removed_mint]
+            # Ensure filtered_history doesn't grow indefinitely (O(N) op but necessary)
+            if removed in self.filtered_history:
+                self.filtered_history.remove(removed)
         
         # If matches current filter (or no filter), add to filtered list
         match = True
@@ -501,14 +438,17 @@ class TokenTable(Widget):
                 row_data = self._format_row_data(item)
                 try:
                     self.table.add_row(*row_data, key=mint, before=0)
+                    self.visible_mints.add(mint)
                     
                     # Maintain page size limit (important for vertical stability)
                     if self.table.row_count > self.page_size:
                         try:
                             # Use coordinate_to_cell_key to find the last row's key
                             last_row_idx = self.table.row_count - 1
-                            last_row_key = self.table.coordinate_to_cell_key((last_row_idx, 0)).row_key
+                            last_row_key = self.table.coordinate_to_cell_key((last_row_idx, 0)).row_key.value # .value is the mint (key)
                             self.table.remove_row(last_row_key)
+                            if last_row_key in self.visible_mints:
+                                self.visible_mints.remove(last_row_key)
                         except:
                             pass
                     
@@ -536,7 +476,7 @@ class TokenTable(Widget):
         if not hasattr(self, "_last_binding_refresh"):
             self._last_binding_refresh = 0
             
-        if now - self._last_binding_refresh > 0.2:
+        if now - self._last_binding_refresh > 0.4:
             self._last_binding_refresh = now
             try:
                 self.app.refresh_bindings()
@@ -544,7 +484,7 @@ class TokenTable(Widget):
                 pass
             
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        """Handle double-click to open trade modal. Enter (keyboard selection) is disabled."""
+        """Handle double-click to open trade modal. Enter (keyboard selection) is disabled locally but handled by App."""
         now = time.time()
         row_key = event.row_key.value
         
@@ -555,10 +495,6 @@ class TokenTable(Widget):
         else:
             self._last_click_time = now
             self._last_clicked_row = row_key
-            
-            # Since Enter key triggers this, we used to select the token here.
-            # To remove the Enter keybind, we do NOT call selection logic here anymore.
-            # Selection must be done via specific click or other method if desired.
             pass
 
     def render_page(self):
@@ -576,6 +512,7 @@ class TokenTable(Widget):
         scroll_x, scroll_y = self.table.scroll_offset
 
         self.table.clear()
+        self.visible_mints.clear() # Clear specific tracking
         self._last_age_values.clear() # Reset cache on full re-render
         
         source_list = self.filtered_history
@@ -588,6 +525,7 @@ class TokenTable(Widget):
             row_data = self._format_row_data(item)
             mint = item.get("mint", "N/A")
             self.table.add_row(*row_data, key=mint)
+            self.visible_mints.add(mint)
         
         # 3. Restore state (Robust)
         if saved_key:
@@ -611,6 +549,52 @@ class TokenTable(Widget):
         self.query_one("#page_label", Label).update(f"Page {self.current_page} (Total: {len(source_list)})")
         self.query_one("#btn_newer", Button).disabled = (self.current_page <= 1)
         self.query_one("#btn_older", Button).disabled = (end_idx >= len(source_list))
+
+    def _update_visible_rows(self) -> None:
+        """Periodic task to refresh visible rows from data store (Batch Update)."""
+        if not self.table.is_mounted or not self.visible_mints: return
+        
+        # Snapshot for thread safetyish behavior
+        mints = list(self.visible_mints)
+        
+        for mint in mints:
+            if mint not in self.data_store: continue
+            item = self.data_store[mint]
+            
+            # Format fresh data using shared logic
+            row_data = self._format_row_data(item)
+            # row_data structure: [sel, ca, name, ticker, mc, tx, hold, buys, sells, vol, dev, age, init_buy]
+            
+            try:
+                # Update Dynamic Colums
+                if "MC ($)" in self.column_keys: 
+                    self.table.update_cell(mint, self.column_keys["MC ($)"], row_data[4])
+                
+                if "Tx" in self.column_keys: 
+                    self.table.update_cell(mint, self.column_keys["Tx"], row_data[5])
+                    
+                if "Hold" in self.column_keys: 
+                    self.table.update_cell(mint, self.column_keys["Hold"], row_data[6])
+                
+                if "Buys" in self.column_keys: 
+                    self.table.update_cell(mint, self.column_keys["Buys"], row_data[7])
+                    
+                if "Sells" in self.column_keys: 
+                    self.table.update_cell(mint, self.column_keys["Sells"], row_data[8])
+                    
+                if "Vol ($)" in self.column_keys: 
+                    self.table.update_cell(mint, self.column_keys["Vol ($)"], row_data[9])
+                    
+                if "Dev" in self.column_keys: 
+                    self.table.update_cell(mint, self.column_keys["Dev"], row_data[10])
+                    
+                if "Age" in self.column_keys: 
+                    self.table.update_cell(mint, self.column_keys["Age"], row_data[11])
+                    
+                if "Init Buy" in self.column_keys: 
+                    self.table.update_cell(mint, self.column_keys["Init Buy"], row_data[12])
+            except: 
+                pass
 
     def _format_row_data(self, item: Dict[str, Any]) -> List[Any]:
         """Format token data for a DataTable row."""
@@ -669,11 +653,24 @@ class TokenTable(Widget):
             
         dev_str = "[green]SOLD[/]" if item.get("dev_sold", False) else "[red]HOLDING[/]"
         
+        # Initial Buy
+        init_buy = float(item.get("initial_buy", 0.0))
+        
+        ib_thresh = config.thresholds.get("initial_buy", {"red": 1.0, "yellow": 2.0})
+        if init_buy > ib_thresh["yellow"]:
+            ib_style = "green"
+        elif init_buy >= ib_thresh["red"]:
+            ib_style = "yellow"
+        else:
+            ib_style = "red"
+            
+        init_buy_str = f"[{ib_style}]{init_buy:.2f} S[/]"
+        
         # Checkbox
-        sel_str = "[green]x[/]" if item.get("mint") == self.selected_mint else "[ ]"
+        sel_str = "[green]\[x][/]" if item.get("mint") == self.selected_mint else "[ ]"
 
-        return [
-            sel_str,
+        row_cells = [
+            Text.from_markup(sel_str),
             display_mint, 
             name, 
             symbol, 
@@ -684,34 +681,32 @@ class TokenTable(Widget):
             Text.from_markup(sells_str), 
             Text.from_markup(vol_str), 
             Text.from_markup(dev_str),
-            age_str
+            age_str,
+            Text.from_markup(init_buy_str)
         ]
-
-    def sort_data(self, sort_field: str, reverse: bool = True):
-        """Sort the underlying data and re-render."""
-        try:
-             self.limit_sorting = True
-             
-             def key_func(x):
-                 val = x.get(sort_field, 0)
-                 if val is None: return 0
-                 return float(val)
-
-             self.filtered_history.sort(key=key_func, reverse=reverse)
-             
-             # Re-render
-             self.current_page = 1
-             self.render_page()
-             
-             title_map = {"marketCapSol": "MC", "volume_sol": "Volume", "timestamp": "Live"}
-             self.table_title = f"New Tokens ({title_map.get(sort_field, sort_field)} ↓)"
-             try:
-                 self.table.border_title = self.table_title
-             except: pass
-
-        except Exception as e:
-            with open("error.log", "a") as f:
-                f.write(f"Sort Error: {e}\n")
+        
+        # Apply underline/bold to the SELECTED row data manually
+        # Keeps colors (e.g. Init Buy) but adds underline to indicate selection
+        if item.get("mint") == self.selected_mint:
+            styled_cells = []
+            for cell in row_cells:
+                if isinstance(cell, Text):
+                    # Copy to avoid mutating the original cached text if any?
+                    # Text objects are mutable. stylize adds to existing style.
+                    # We might want a copy to ensure we don't permanently underline the data store object if it's reused?
+                    # The inputs like 'market_cap' are created fresh in this function: Text.from_markup(market_cap).
+                    # So modifying them is safe.
+                    cell.stylize("bold underline")
+                    styled_cells.append(cell)
+                else:
+                    # Convert strings to Text to apply style
+                    # Use from_markup to ensure any existing tags in strings (like [x]) are respected
+                    t = Text.from_markup(str(cell))
+                    t.stylize("bold underline")
+                    styled_cells.append(t)
+            return styled_cells
+            
+        return row_cells
 
     def sort_data(self, sort_field: str, reverse: bool = True):
         """Sort the underlying data and re-render."""
@@ -721,10 +716,11 @@ class TokenTable(Widget):
              self.last_sort_reverse = reverse
              
              def key_func(x):
-                 val = x.get(sort_field, 0)
                  try:
-                     return float(val) if val is not None else 0.0
-                 except ValueError:
+                     val = x.get(sort_field, 0)
+                     if val is None: return 0.0
+                     return float(val)
+                 except (ValueError, TypeError):
                      return 0.0
 
              self.filtered_history.sort(key=key_func, reverse=reverse)
@@ -1283,12 +1279,13 @@ class TradePanel(Container):
             # Spacer after Trade title
             yield Label("", classes="spacer")
             
-            # Market Stats Box (MC | Vol | Dev)
+            # Market Stats Box (MC | Vol | Dev | Age)
             with Container(id="market_stats_box", classes="stats-grid"):
                 with Horizontal():
                      yield Label("MC: -", id="mc_label", classes="count-label")
                      yield Label("Vol: -", id="vol_label", classes="count-label")
                      yield Label("Dev: -", id="dev_label", classes="count-label")
+                     yield Label("Age: -", id="age_label", classes="count-label")
 
             # Trading Stats Box (Tx | Hold | Buys | Sells)
             with Container(id="trading_stats_box", classes="stats-grid"):
@@ -1610,11 +1607,21 @@ class TradePanel(Container):
 
             # Dev Status
             dev_sold = self.token_data.get("dev_sold", False)
-            dev_str = "Dev: [red]SOLD[/]" if dev_sold else "Dev: [green]HOLDING[/]"
+            dev_str = "Dev: [green]SOLD[/]" if dev_sold else "Dev: [red]HOLDING[/]"
             self.query_one("#dev_label", Label).update(Text.from_markup(dev_str))
+            
+            # Age Calculation
+            start_ts = self.token_data.get("timestamp")
+            age_str = "0s"
+            if start_ts:
+                diff = int(time.time() - start_ts)
+                if diff < 60: age_str = f"{diff}s"
+                elif diff < 3600: age_str = f"{diff // 60}m {diff % 60}s"
+                else: age_str = f"{diff // 3600}h {(diff % 3600) // 60}m"
+            self.query_one("#age_label", Label).update(f"Age: {age_str}")
 
             # Dev Initial Buy
-            init_buy = self.token_data.get("initial_buy", 0.0)
+            init_buy = float(self.token_data.get("initial_buy", 0.0))
             self.query_one("#initial_label", Label).update(f"Buy: {init_buy:.2f}")
 
             # Display Name and full CA
